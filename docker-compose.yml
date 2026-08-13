@@ -1,0 +1,74 @@
+services:
+
+  # ── Local PostgreSQL database ──────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: uabams_db
+    restart: always
+    environment:
+      POSTGRES_DB: uabams_db
+      POSTGRES_USER: uabams_user
+      POSTGRES_PASSWORD: uabams_pass
+    ports:
+      - "5433:5432"          # expose so pgAdmin / DBeaver can connect locally
+    volumes:
+      # Bind mount → DB files live on the HOST at ./uabams-data/pgdata
+      # Survives 'docker compose down -v'. Back up this directory for DB snapshots.
+      - ./uabams-data/pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U uabams_user -d uabams_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── FastAPI application ────────────────────────────────────────────────────
+  uabams-cloud:
+    build: .
+    container_name: uabams_app
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy   # wait until Postgres is ready
+    environment:
+      DATABASE_TYPE: postgres
+      DATABASE_URL: postgresql://uabams_user:uabams_pass@postgres:5432/uabams_db
+      JWT_SECRET: local-docker-change-me
+      JWT_ALGORITHM: HS256
+      ADMIN_RESET_KEY: local-admin-key
+      OPERATOR_USERNAME: operator
+      OPERATOR_PASSWORD: operator123
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: admin123
+      CLOUD_PUBLIC_BASE_URL: "${CLOUD_PUBLIC_BASE_URL:-http://localhost:8000}"
+      SSH_HOST: "localhost"
+      SSH_PORT: "2222"
+      SSH_USER: "uabams_upload"
+      SSH_HOST_KEY: "[localhost]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK85B67Av9O32vupZ6mpgptiFD6z7Yp0PM4UxvOLCA7i"
+      UPLOAD_BASE_DIR: "/app/incoming"
+      AUTHORIZED_KEYS_PATH: "/app/sftp_keys/authorized_keys"
+      TIME_DOMAIN_DIR: "/app/time_domain"
+    volumes:
+      # Live code bind mount for immediate UI/API updates
+      - ./app:/app/app
+      # SSH authorized_keys shared with the SFTP container
+      - ./uabams-data/sftp_keys:/app/sftp_keys
+      # Incoming ZIP uploads (deleted after processing, but kept as landing zone)
+      - ./uabams-data/sftp_incoming:/app/incoming
+      # Extracted time-domain sensor binary files (replaces Postgres BYTEA chunks)
+      - ./uabams-data/time_domain:/app/time_domain
+    restart: always
+
+  # ── SSH/Rsync Server ────────────────────────────────────────────────────────
+  rsync_ssh:
+    build: ./rsync_ssh
+    container_name: uabams_sftp
+    ports:
+      - "2222:22"
+    volumes:
+      # Same host dirs as the app — shared access to keys and incoming files
+      - ./uabams-data/sftp_keys:/home/uabams_upload/.ssh
+      - ./uabams-data/sftp_incoming:/home/uabams_upload/incoming
+    restart: always
+
+# ── No named volumes needed — all data lives on the host at ./uabams-data/ ──

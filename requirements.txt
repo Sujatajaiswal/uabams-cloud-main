@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+
+python-dotenv
+pydantic
+PyJWT
+python-multipart
+cryptography
+asyncpg
+reportlab
+python-dateutil
+passlib
+bcrypt==3.2.2

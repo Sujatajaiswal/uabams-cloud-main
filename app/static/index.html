@@ -1,0 +1,714 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UABAMS Dashboard</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="/static/styles.css?v=20260813-v3">
+</head>
+<body>
+  <!-- Dummy inputs to capture aggressive browser autofill -->
+  <input type="text" style="display:none;" autocomplete="username">
+  <input type="password" style="display:none;" autocomplete="current-password">
+  <header class="app-header">
+    <div class="brand-box">
+      <img src="/static/railman-logo.png" class="header-logo" alt="RailMan Logo">
+    </div>
+    <div class="emblem-container">
+      <img src="/static/indian-railways-emblem.png" class="emblem-logo" alt="Emblem">
+    </div>
+    <div class="nav-content">
+      <div class="header-title-area">
+        <h1 class="header-title">UABAMS</h1>
+        <p class="header-subtitle">Vande Bharat gateway monitoring console</p>
+      </div>
+      <div class="header-actions">
+
+        <div class="profile-dropdown">
+          <button class="profile-dropdown-btn" onclick="document.getElementById('profileDropdownContent').classList.toggle('show')">
+            <span id="displayUsername" style="text-transform: uppercase;">ADMIN</span>
+            <i class="bi bi-person-circle" style="font-size: 18px;"></i>
+          </button>
+          <div class="profile-dropdown-content" id="profileDropdownContent">
+            <a href="javascript:void(0)" onclick="selectTab('users'); document.getElementById('profileDropdownContent').classList.remove('show');" id="dropdownUsersLink" class="admin-only">
+              <i class="bi bi-people" style="margin-right: 8px;"></i> Users
+            </a>
+            <a href="/docs" target="_blank" class="admin-only" onclick="document.getElementById('profileDropdownContent').classList.remove('show');">
+              <i class="bi bi-file-earmark-text" style="margin-right: 8px;"></i> Swagger API
+            </a>
+            <a href="/logout">
+              <i class="bi bi-box-arrow-right" style="margin-right: 8px;"></i> Logout
+            </a>
+          </div>
+        </div>
+        <div class="status-pill ok" id="apiStatus">
+          <span class="status-dot"></span>
+          Live
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="toolbar gateway-toolbar" aria-label="Train and gateway selector">
+      <label>
+        Search Train No / Name
+        <input id="trainNo" name="trainNoSearch" type="text" value="" placeholder="Enter train number or name" autocomplete="search" list="recentTrainNos">
+        <datalist id="recentTrainNos"></datalist>
+      </label>
+      <label>
+        Gateway
+        <select id="dashboardGateway">
+          <option value="">All Gateways</option>
+        </select>
+      </label>
+      <button id="searchBtn" class="primary">Search Train</button>
+    </section>
+    <nav class="tabs" aria-label="Dashboard sections">
+      <button class="tab active" data-tab="overview">Dashboard</button>
+      <button class="tab admin-only" data-tab="calibration">Calibration</button>
+      <button class="tab" data-tab="alerts">Alerts</button>
+      <button class="tab" data-tab="archives">Archives</button>
+      <button class="tab admin-only" data-tab="reset">Reset</button>
+      <button class="tab admin-only" data-tab="logs">Logs</button>
+
+      <button class="tab" data-tab="repeated_alarm">Repeated Alarm</button>
+      <button class="tab" data-tab="alarm_log_reports">Alarm Log Reports</button>
+      <button class="tab" data-tab="rolling_stock_graph">Alert Graph</button>
+    </nav>
+
+    <section id="overview" class="panel active">
+      <div class="summary-grid">
+        <div class="metric"><span>Train No / Name</span><strong id="summaryTrain">-</strong></div>
+        <div class="metric"><span>Latest Trip</span><strong id="summaryLatestTrip" style="font-size: 13px; line-height: 1.4; color: var(--ink); text-align: center; font-weight: bold;">-</strong></div>
+        <div class="metric"><span>Status</span><strong id="summaryStatus">-</strong></div>
+        <div class="metric"><span>Gateways Online</span><strong id="summaryGateways">-</strong></div>
+        <div class="metric"><span>Last Data</span><strong id="summaryLastData">-</strong></div>
+        <div class="metric"><span>Archives</span><strong id="summaryArchives">-</strong></div>
+        <div class="metric"><span>Critical Alerts</span><strong id="summaryCritical">-</strong></div>
+      </div>
+      <div class="section-head"><h2>Gateway Status</h2></div>
+      <div id="gatewayList" class="gateway-grid two-col"></div>
+
+      <section id="dashboardGatewayDetails" class="gateway-detail-section hidden">
+        <div class="section-head"><h2>Selected Gateway Details</h2></div>
+        <div class="summary-grid detail-grid">
+          <div class="metric"><span>Gateway</span><strong id="detailGatewayId">-</strong></div>
+          <div class="metric"><span>Status</span><strong id="detailStatus">-</strong></div>
+          <div class="metric"><span>Last Heartbeat</span><strong id="detailHeartbeat">-</strong></div>
+          <div class="metric"><span>Latest Alert</span><strong id="detailAlert">-</strong></div>
+          <div class="metric"><span>RMS Records</span><strong id="detailRms">-</strong></div>
+          <div class="metric"><span>Peak Records</span><strong id="detailPeak">-</strong></div>
+          <div class="metric"><span>Fault Records</span><strong id="detailFaults">-</strong></div>
+          <div class="metric"><span>Archives</span><strong id="detailArchives">-</strong></div>
+        </div>
+        <div class="section-head"><h2>Recent Alerts For Selected Gateway</h2></div>
+        <div class="table-wrap compact-table">
+          <table>
+            <thead><tr><th>Time</th><th>Peak G</th><th>Alert</th><th>Location</th></tr></thead>
+            <tbody id="detailAlertsTable"></tbody>
+          </table>
+        </div>
+        <div class="section-head"><h2>Recent Archives For Selected Gateway</h2></div>
+        <div class="table-wrap compact-table">
+          <table>
+            <thead>
+              <tr><th>Received</th><th>Size</th><th>RMS</th><th>Peak</th><th>Alerts</th><th>Status</th></tr>
+            </thead>
+            <tbody id="detailArchivesTable"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="calibration" class="panel">
+      <div class="section-head">
+        <h2>Gateway Calibration</h2>
+        <button id="loadAllCalibrationBtn">Load All</button>
+      </div>
+      <div class="calibration-pair" id="calibrationPair"></div>
+    </section>
+
+    <section id="alerts" class="panel">
+      <div class="section-head"><h2>OpenStreetMap Alert View</h2></div>
+      
+      <div class="search-toolbar" style="margin-bottom: 20px; gap: 10px; flex-wrap: wrap;">
+        <div class="toolbar-item" style="min-width: 140px; margin-bottom: 0;">
+          <label for="filterZone" style="font-size: 13px; font-weight: 700; color: #495057;">Zone</label>
+          <select id="filterZone" class="form-control" style="height: 34px; padding: 0 8px;">
+            <option value="">All Zones</option>
+            <option value="NCR">North Central Railway (NCR)</option>
+          </select>
+        </div>
+        <div class="toolbar-item" style="min-width: 140px; margin-bottom: 0;">
+          <label for="filterDivision" style="font-size: 13px; font-weight: 700; color: #495057;">Division</label>
+          <select id="filterDivision" class="form-control" style="height: 34px; padding: 0 8px;">
+            <option value="">All Divisions</option>
+            <option value="Prayagraj">Prayagraj Division</option>
+          </select>
+        </div>
+        <div class="toolbar-item" style="min-width: 140px; margin-bottom: 0;">
+          <label for="filterSection" style="font-size: 13px; font-weight: 700; color: #495057;">Section</label>
+          <select id="filterSection" class="form-control" style="height: 34px; padding: 0 8px;">
+            <option value="">All Sections</option>
+            <option value="ABC-XYZ">ABC - XYZ</option>
+          </select>
+        </div>
+        <div class="toolbar-item" style="min-width: 140px; margin-bottom: 0;">
+          <label for="filterLevel" style="font-size: 13px; font-weight: 700; color: #495057;">Alert Level</label>
+          <select id="filterLevel" class="form-control" style="height: 34px; padding: 0 8px;">
+            <option value="">All Levels</option>
+            <option value="RED">Critical</option>
+            <option value="YELLOW">Warning</option>
+            <option value="GREEN">Normal</option>
+          </select>
+        </div>
+        <div class="toolbar-item" style="min-width: 160px; margin-bottom: 0;">
+          <label for="mapDateFilter" style="font-size: 13px; font-weight: 700; color: #495057;">Date</label>
+          <input id="mapDateFilter" type="date" class="form-control" style="height: 34px; padding: 0 8px;">
+        </div>
+        <div class="toolbar-item" style="display: flex; flex-direction: row; gap: 6px; align-items: flex-end; margin-bottom: 0;">
+          <button id="mapDateTodayBtn" class="secondary" style="height: 34px; padding: 0 12px; font-size: 13px;">Today</button>
+          <button id="mapDateYesterdayBtn" class="secondary" style="height: 34px; padding: 0 12px; font-size: 13px;">Yesterday</button>
+          <button id="mapDateAllBtn" class="secondary" style="height: 34px; padding: 0 12px; font-size: 13px;">Show All</button>
+        </div>
+      </div>
+
+      <div class="alert-summary-grid">
+        <div class="alert-summary red" id="card-RED" onclick="filterByAlertLevel('RED')">
+            <div class="summary-content">
+                <span class="summary-title">Critical Defects</span>
+                <strong id="alertRed" class="summary-value">0</strong>
+                <span class="summary-subtext">Action Required</span>
+            </div>
+            <div class="summary-icon"><i class="bi bi-exclamation-triangle"></i></div>
+        </div>
+
+        <div class="alert-summary yellow" id="card-YELLOW" onclick="filterByAlertLevel('YELLOW')">
+            <div class="summary-content">
+                <span class="summary-title">Warning Defects</span>
+                <strong id="alertYellow" class="summary-value">0</strong>
+                <span class="summary-subtext">Monitor Closely</span>
+            </div>
+            <div class="summary-icon"><i class="bi bi-exclamation-circle"></i></div>
+        </div>
+
+        <div class="alert-summary green" id="card-GREEN" onclick="filterByAlertLevel('GREEN')">
+            <div class="summary-content">
+                <span class="summary-title">Normal Alerts</span>
+                <strong id="alertGreen" class="summary-value">0</strong>
+                <span class="summary-subtext">Track in Good Condition</span>
+            </div>
+            <div class="summary-icon"><i class="bi bi-check-circle"></i></div>
+        </div>
+
+        <div class="alert-summary total" id="card-TOTAL" onclick="filterByAlertLevel('TOTAL')">
+            <div class="summary-content">
+                <span class="summary-title">Total Alerts (Today)</span>
+                <strong id="alertTotal" class="summary-value">0</strong>
+                <span class="summary-subtext">Across Section</span>
+            </div>
+            <div class="summary-icon"><i class="bi bi-bar-chart"></i></div>
+        </div>
+      </div>
+      <div class="map-pair">
+        <article class="map-card" data-map-gateway="GW_UABAMS_BOGIE_01">
+          <div class="gateway-title"><span>GW1 Route Map</span><span id="gw1MapState" class="badge offline">-</span></div>
+          <div class="route-map leaflet-map" id="mapGw1"></div>
+        </article>
+        <article class="map-card" data-map-gateway="GW_UABAMS_BOGIE_02">
+          <div class="gateway-title"><span>GW2 Route Map</span><span id="gw2MapState" class="badge offline">-</span></div>
+          <div class="route-map leaflet-map" id="mapGw2"></div>
+        </article>
+      </div>
+      <div class="map-legend">
+        <span class="dot GREEN"></span> Normal route
+        <span class="dot YELLOW"></span> Warning route
+        <span class="dot RED"></span> Critical route / red alert marker
+      </div>
+      <div class="section-head"><h2>Alert Events</h2></div>
+      <div class="table-wrap compact-table">
+        <table>
+          <thead>
+            <tr><th>Time</th><th>Gateway</th><th>Zone</th><th>Division</th><th>Section</th><th>Peak G</th><th>Alert</th><th>Location</th></tr>
+          </thead>
+          <tbody id="alertsTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="archives" class="panel">
+      <div class="section-head"><h2>Archive Uploads</h2></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Start Date</th><th>End Date</th><th>Size</th><th>RMS</th><th>Peak</th><th>Alert</th><th>Status</th></tr>
+          </thead>
+          <tbody id="archiveTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="reset" class="panel">
+      <div class="reset-zone">
+        <div>
+          <h2>Reset Session</h2>
+          <p id="sessionText">No active session loaded.</p>
+        </div>
+        <div class="reset-actions">
+          <p style="opacity:0.7;font-size:0.9em">You will be asked for the admin password when you click the button.</p>
+          <button id="resetBtn" class="danger">🔄 Reset Train Session</button>
+        </div>
+      </div>
+      <div class="section-head"><h2>Targeted Data Cleanup</h2></div>
+      <div class="reset-form">
+        <label>Gateway
+          <select id="cleanupGateway">
+            <option value="">All Gateways</option>
+            <option value="GW_UABAMS_BOGIE_01">GW1</option>
+            <option value="GW_UABAMS_BOGIE_02">GW2</option>
+          </select>
+        </label>
+        <label>Start Time<input id="cleanupStart" type="datetime-local" step="1"></label>
+        <label>End Time<input id="cleanupEnd" type="datetime-local" step="1"></label>
+        <label>Latitude<input id="cleanupLat" type="number" step="0.000001" placeholder="Optional"></label>
+        <label>Longitude<input id="cleanupLon" type="number" step="0.000001" placeholder="Optional"></label>
+        <label>Radius Meters<input id="cleanupRadius" type="number" step="1" value="100"></label>
+        <label class="wide-field">Reason<input id="cleanupReason" placeholder="Server issue / wrong test upload"></label>
+        <button id="cleanupBtn" class="danger">Delete Matching Data</button>
+      </div>
+      <pre id="resetOutput" class="output"></pre>
+    </section>
+
+    <section id="logs" class="panel">
+      <div class="section-head">
+        <h2>Activity Logs</h2>
+        <button id="loadLogsBtn">Refresh Logs</button>
+      </div>
+      <div class="table-wrap compact-table">
+        <table>
+          <thead><tr><th>Time</th><th>User</th><th>Page</th><th>Action</th><th>Severity</th><th>Error</th><th>IP</th><th>Location</th></tr></thead>
+          <tbody id="logsTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="users" class="panel">
+      <div class="section-head">
+        <h2>User Management</h2>
+        <button id="addUserBtn" class="primary">+ Add User</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Role</th>
+              <th>Status</th>
+              <th>Permissions</th>
+              <th>Created</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="usersTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Repeated Alarm Panel -->
+    <section id="repeated_alarm" class="panel">
+      <div class="page-header">
+        <h2>Repeated Alarm </h2>
+      </div>
+
+      <div class="search-toolbar">
+        <div class="toolbar-item">
+          <label for="repFromDate">From Date</label>
+          <input id="repFromDate" type="datetime-local" class="form-control">
+        </div>
+        <div class="toolbar-item">
+          <label for="repToDate">To Date</label>
+          <input id="repToDate" type="datetime-local" class="form-control">
+        </div>
+        <button id="repLoadReportBtn" class="primary" style="height: 38px;">Load Report</button>
+      </div>
+
+
+      <div class="report-table-card">
+        <div class="table-header">
+          <h3 class="table-title">Repeated Rolling Stock Results</h3>
+          <div class="export-dropdown">
+            <button class="export-btn" id="repExportBtn"><i class="bi bi-download"></i> Export <i class="bi bi-chevron-down"></i></button>
+            <div class="export-menu" id="repExportMenu">
+              <button id="repExportCsvBtn">CSV</button>
+              <button id="repExportExcelBtn">Excel</button>
+              <button id="repExportPdfBtn">PDF</button>
+            </div>
+          </div>
+        </div>
+        <div class="toolbar-item" style="margin-bottom: 15px; width: 100%; max-width: 400px;">
+          <input id="repSearchRid" type="text" class="form-control" placeholder="Search RID" list="recentTrainNos">
+        </div>
+        <div class="table-wrapper">
+          <table class="alarm-log-table" id="repeatedAlarmsTable">
+            <thead>
+              <tr>
+                <th data-field="rid">RID</th>
+                <th data-field="count">Count</th>
+                <th data-field="location">Location</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="repeatedAlarmsTableBody">
+              <tr><td colspan="4">Click Load Report to fetch data.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Alarm Log Reports Panel -->
+    <section id="alarm_log_reports" class="panel">
+      <div class="page-header">
+        <h2>Alarm Log Reports</h2>
+      </div>
+
+      <div class="search-toolbar">
+        <div class="toolbar-item">
+          <label for="ridInput">RID</label>
+          <input id="ridInput" type="text" class="form-control" placeholder="Enter RID (e.g. TR_002)" list="recentTrainNos">
+        </div>
+        <div class="toolbar-item">
+          <label for="fromDate">From Date</label>
+          <input id="fromDate" type="datetime-local" class="form-control">
+        </div>
+        <div class="toolbar-item">
+          <label for="toDate">To Date</label>
+          <input id="toDate" type="datetime-local" class="form-control">
+        </div>
+        <div class="toolbar-item">
+          <label for="alarmTypeFilter">Alarm Type</label>
+          <div class="select-wrapper">
+            <select id="alarmTypeFilter" class="form-select">
+              <option value="All">All</option>
+              <option value="Critical">Critical</option>
+              <option value="Maintenance">Maintenance</option>
+              <option value="Normal">Normal</option>
+            </select>
+          </div>
+        </div>
+        <button id="loadReportBtn" class="primary" style="height: 38px;">Load Report</button>
+      </div>
+
+      <div class="summary-section" id="summarySection">
+        <div class="summary-grid" style="grid-template-columns: repeat(4, minmax(150px, 1fr));">
+          <div class="summary-card">
+            <div class="summary-icon total-alarms-icon">
+              <i class="bi bi-bell"></i>
+            </div>
+            <div class="summary-content">
+              <span class="summary-label">Total Alarms</span>
+              <strong id="totalAlarmCard" class="summary-value">0</strong>
+            </div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-icon critical-icon">
+              <i class="bi bi-exclamation-triangle"></i>
+            </div>
+            <div class="summary-content">
+              <span class="summary-label">Critical</span>
+              <strong id="criticalAlarmCard" class="summary-value">0</strong>
+            </div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-icon maintenance-icon">
+              <i class="bi bi-tools"></i>
+            </div>
+            <div class="summary-content">
+              <span class="summary-label">Maintenance</span>
+              <strong id="maintenanceAlarmCard" class="summary-value">0</strong>
+            </div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-icon" style="background: #198754;">
+              <i class="bi bi-shield-check"></i>
+            </div>
+            <div class="summary-content">
+              <span class="summary-label">Normal</span>
+              <strong id="normalAlarmCard" class="summary-value">0</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="current-result-section" id="currentResultSection" style="display:none;">
+        <h4 class="current-result-title">Current Result Set (Based on Applied Filters)</h4>
+        <div class="current-result-grid" style="grid-template-columns: repeat(3, 1fr);">
+          <div class="result-item">
+            <i class="bi bi-tag result-icon"></i>
+            <div class="result-content">
+              <span class="result-label">RID</span>
+              <strong id="currentRid" class="result-value">-</strong>
+            </div>
+          </div>
+          <div class="result-item">
+            <i class="bi bi-exclamation-octagon result-icon"></i>
+            <div class="result-content">
+              <span class="result-label">Alarm Type</span>
+              <strong id="currentAlarmType" class="result-value">-</strong>
+            </div>
+          </div>
+          <div class="result-item">
+            <i class="bi bi-calendar-range result-icon"></i>
+            <div class="result-content">
+              <span class="result-label">Date Range</span>
+              <strong id="currentDateRange" class="result-value">-</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="report-banner" id="recordBanner" style="display: none;"></div>
+
+      <div class="report-table-card" id="tableSection" style="display:none;">
+        <div class="table-header">
+          <h3 class="table-title">Alarm Log Results</h3>
+          <div class="export-dropdown" id="exportToolbar">
+            <button class="export-btn"><i class="bi bi-download"></i> Export <i class="bi bi-chevron-down"></i></button>
+            <div class="export-menu">
+              <button id="exportCsvBtn">CSV</button>
+              <button id="exportExcelBtn">Excel</button>
+              <button id="exportPdfBtn">PDF</button>
+            </div>
+          </div>
+        </div>
+        <div class="table-wrapper">
+          <table class="alarm-log-table" id="alarmLogTable">
+            <thead>
+              <tr>
+                <th data-field="alarmDate">Date</th>
+                <th data-field="alarmTime">Time</th>
+                <th data-field="machineName">Machine</th>
+                <th data-field="train">Train</th>
+                <th data-field="location">Location</th>
+              </tr>
+            </thead>
+            <tbody id="alarmLogTableBody">
+              <tr><td colspan="5">Click Load Report to fetch data.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Rolling Stock Graph Panel -->
+    <section id="rolling_stock_graph" class="panel">
+      <div class="page-header">
+        <h2>Alert Graph</h2>
+      </div>
+
+      <div class="search-toolbar" style="margin-bottom: 20px;">
+        <div class="toolbar-item">
+          <label for="graphRid">Rolling Stock ID (RID)</label>
+          <input id="graphRid" type="text" class="form-control" placeholder="Enter RID (e.g. TR_002)" list="recentTrainNos">
+        </div>
+        <div class="toolbar-item">
+          <label for="graphMetricFilter">Select Metrics</label>
+          <div class="select-wrapper">
+            <select id="graphMetricFilter" class="form-select">
+              <option value="Peak">Peak G-Force</option>
+              <option value="RMS">RMS G-Force</option>
+            </select>
+          </div>
+        </div>
+        <div class="toolbar-item">
+          <label for="graphAxisFilter">Select Axis</label>
+          <div class="select-wrapper">
+            <select id="graphAxisFilter" class="form-select">
+              <option value="bg">Bogie (bg)</option>
+              <option value="al">Axle Left (al)</option>
+              <option value="ar">Axle Right (ar)</option>
+            </select>
+          </div>
+        </div>
+        <div class="toolbar-item">
+          <label for="graphFromDate">From Date</label>
+          <input id="graphFromDate" type="datetime-local" class="form-control">
+        </div>
+        <div class="toolbar-item">
+          <label for="graphToDate">To Date</label>
+          <input id="graphToDate" type="datetime-local" class="form-control">
+        </div>
+        <button id="loadGraphBtn" class="primary" style="height: 38px;">Load Graph</button>
+      </div>
+
+      <div class="current-result-section" id="graphMetadataSection" style="display:none; margin-bottom: 24px;">
+        <div class="current-result-grid" style="grid-template-columns: repeat(2, 1fr);">
+          <div class="result-item">
+            <i class="bi bi-cpu result-icon"></i>
+            <div class="result-content">
+              <span class="result-label">Rolling Stock ID</span>
+              <strong id="metaRollingStockId" class="result-value">-</strong>
+            </div>
+          </div>
+          <div class="result-item">
+            <i class="bi bi-calendar-range result-icon"></i>
+            <div class="result-content">
+              <span class="result-label">Date Range</span>
+              <strong id="metaGraphDateRange" class="result-value">-</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="graphMainContent" style="display:none; grid-template-columns: 3.2fr 1fr; gap: 20px;">
+        <div class="report-table-card" id="graphCard" style="padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+          <div style="width: 100%; position: relative; height: 260px;">
+            <h3 id="chartXTitle" style="font-size: 14px; margin-bottom: 6px; font-weight: bold; text-align: center;">X Axis</h3>
+            <canvas id="chartX"></canvas>
+            <div class="chart-controls" style="position: absolute; top: 5px; right: 5px; display: flex; gap: 5px; z-index: 100;">
+              <button onclick="zoomChart('X', 1.15)" title="Zoom In" style="width: 26px; height: 26px; border-radius: 4px; border: 1px solid #495057; background: #212529; color: #f8f9fa; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.3);"><i class="bi bi-plus-lg"></i></button>
+              <button onclick="zoomChart('X', 0.85)" title="Zoom Out" style="width: 26px; height: 26px; border-radius: 4px; border: 1px solid #495057; background: #212529; color: #f8f9fa; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.3);"><i class="bi bi-dash-lg"></i></button>
+              <button onclick="resetChartZoom('X')" title="Reset Zoom" style="width: 26px; height: 26px; border-radius: 4px; border: 1px solid #495057; background: #212529; color: #f8f9fa; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.3);"><i class="bi bi-arrow-counterclockwise"></i></button>
+            </div>
+          </div>
+          <div style="width: 100%; position: relative; height: 260px; margin-top: 15px;">
+            <h3 id="chartYTitle" style="font-size: 14px; margin-bottom: 6px; font-weight: bold; text-align: center;">Y Axis</h3>
+            <canvas id="chartY"></canvas>
+            <div class="chart-controls" style="position: absolute; top: 5px; right: 5px; display: flex; gap: 5px; z-index: 100;">
+              <button onclick="zoomChart('Y', 1.15)" title="Zoom In" style="width: 26px; height: 26px; border-radius: 4px; border: 1px solid #495057; background: #212529; color: #f8f9fa; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.3);"><i class="bi bi-plus-lg"></i></button>
+              <button onclick="zoomChart('Y', 0.85)" title="Zoom Out" style="width: 26px; height: 26px; border-radius: 4px; border: 1px solid #495057; background: #212529; color: #f8f9fa; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.3);"><i class="bi bi-dash-lg"></i></button>
+              <button onclick="resetChartZoom('Y')" title="Reset Zoom" style="width: 26px; height: 26px; border-radius: 4px; border: 1px solid #495057; background: #212529; color: #f8f9fa; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.3);"><i class="bi bi-arrow-counterclockwise"></i></button>
+            </div>
+          </div>
+          <div style="width: 100%; position: relative; height: 260px; margin-top: 15px;">
+            <h3 id="chartZTitle" style="font-size: 14px; margin-bottom: 6px; font-weight: bold; text-align: center;">Z Axis</h3>
+            <canvas id="chartZ"></canvas>
+            <div class="chart-controls" style="position: absolute; top: 5px; right: 5px; display: flex; gap: 5px; z-index: 100;">
+              <button onclick="zoomChart('Z', 1.15)" title="Zoom In" style="width: 26px; height: 26px; border-radius: 4px; border: 1px solid #495057; background: #212529; color: #f8f9fa; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.3);"><i class="bi bi-plus-lg"></i></button>
+              <button onclick="zoomChart('Z', 0.85)" title="Zoom Out" style="width: 26px; height: 26px; border-radius: 4px; border: 1px solid #495057; background: #212529; color: #f8f9fa; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.3);"><i class="bi bi-dash-lg"></i></button>
+              <button onclick="resetChartZoom('Z')" title="Reset Zoom" style="width: 26px; height: 26px; border-radius: 4px; border: 1px solid #495057; background: #212529; color: #f8f9fa; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.3);"><i class="bi bi-arrow-counterclockwise"></i></button>
+            </div>
+          </div>
+        </div>
+
+        <div class="report-table-card" id="graphSidebar" style="padding: 24px; display: flex; flex-direction: column; gap: 20px; background: #111827; border: 1px solid #1f2937; border-radius: 8px;">
+          <h3 style="font-size: 15px; font-weight: bold; border-bottom: 1px solid #1f2937; padding-bottom: 10px; margin-bottom: 5px; color: #f9fafb;">Alert Summary</h3>
+          
+          <!-- X Axis Alerts -->
+          <div class="sidebar-section">
+            <h4 style="font-size: 11px; text-transform: uppercase; color: #9ca3af; margin-bottom: 8px; font-weight: bold;">X Axis Alerts</h4>
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; background: rgba(239, 68, 68, 0.06); border-left: 3px solid #ef4444; border-radius: 4px; font-size: 11px;">
+                <span style="color: #fca5a5;">Critical (Red)</span>
+                <strong id="sbCriticalX" style="color: #ef4444;">0</strong>
+              </div>
+              <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; background: rgba(245, 158, 11, 0.06); border-left: 3px solid #f59e0b; border-radius: 4px; font-size: 11px;">
+                <span style="color: #fde047;">Warning (Yellow)</span>
+                <strong id="sbWarningX" style="color: #f59e0b;">0</strong>
+              </div>
+              <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; background: rgba(16, 185, 129, 0.06); border-left: 3px solid #10b981; border-radius: 4px; font-size: 11px;">
+                <span style="color: #a7f3d0;">Normal (Green)</span>
+                <strong id="sbNormalX" style="color: #10b981;">0</strong>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Y Axis Alerts -->
+          <div class="sidebar-section">
+            <h4 style="font-size: 11px; text-transform: uppercase; color: #9ca3af; margin-bottom: 8px; font-weight: bold;">Y Axis Alerts</h4>
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; background: rgba(239, 68, 68, 0.06); border-left: 3px solid #ef4444; border-radius: 4px; font-size: 11px;">
+                <span style="color: #fca5a5;">Critical (Red)</span>
+                <strong id="sbCriticalY" style="color: #ef4444;">0</strong>
+              </div>
+              <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; background: rgba(245, 158, 11, 0.06); border-left: 3px solid #f59e0b; border-radius: 4px; font-size: 11px;">
+                <span style="color: #fde047;">Warning (Yellow)</span>
+                <strong id="sbWarningY" style="color: #f59e0b;">0</strong>
+              </div>
+              <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; background: rgba(16, 185, 129, 0.06); border-left: 3px solid #10b981; border-radius: 4px; font-size: 11px;">
+                <span style="color: #a7f3d0;">Normal (Green)</span>
+                <strong id="sbNormalY" style="color: #10b981;">0</strong>
+              </div>
+            </div>
+          </div>
+
+          <!-- Z Axis Alerts -->
+          <div class="sidebar-section">
+            <h4 style="font-size: 11px; text-transform: uppercase; color: #9ca3af; margin-bottom: 8px; font-weight: bold;">Z Axis Alerts</h4>
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; background: rgba(239, 68, 68, 0.06); border-left: 3px solid #ef4444; border-radius: 4px; font-size: 11px;">
+                <span style="color: #fca5a5;">Critical (Red)</span>
+                <strong id="sbCriticalZ" style="color: #ef4444;">0</strong>
+              </div>
+              <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; background: rgba(245, 158, 11, 0.06); border-left: 3px solid #f59e0b; border-radius: 4px; font-size: 11px;">
+                <span style="color: #fde047;">Warning (Yellow)</span>
+                <strong id="sbWarningZ" style="color: #f59e0b;">0</strong>
+              </div>
+              <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; background: rgba(16, 185, 129, 0.06); border-left: 3px solid #10b981; border-radius: 4px; font-size: 11px;">
+                <span style="color: #a7f3d0;">Normal (Green)</span>
+                <strong id="sbNormalZ" style="color: #10b981;">0</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    </div>
+  </main>
+
+  <script src="/static/security.js?v=20260720-sec-v2"></script>
+  <div id="userModal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <span class="close" id="closeUserModal">&times;</span>
+      <h2 id="userModalTitle">Add User</h2>
+      <form id="userForm">
+        <input type="hidden" id="userId">
+        
+        <label>Username
+          <input type="text" id="userUsername" required>
+        </label>
+        
+        <label>Password
+          <input type="password" id="userPassword" placeholder="Leave blank to keep unchanged (if editing)">
+        </label>
+        
+        <label>Role
+          <select id="userRole" required>
+            <option value="admin">Admin</option>
+            <option value="operator" selected>Operator</option>
+          </select>
+        </label>
+        
+        <fieldset style="margin-top: 15px; border: 1px solid var(--border); padding: 10px; border-radius: 4px;">
+          <legend style="padding: 0 5px; font-weight: bold; color: var(--text-muted);">Permissions</legend>
+          <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px; cursor: pointer;">
+            <input type="checkbox" id="userPermViewAlerts" checked> View Alerts Dashboard
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px; cursor: pointer;">
+            <input type="checkbox" id="userPermConfigureThresholds"> Configure Thresholds (Calibration)
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="userPermManageUsers"> Manage Users (Admin Panel)
+          </label>
+        </fieldset>
+        
+        <label style="display: flex; align-items: center; gap: 8px; margin-top: 15px; cursor: pointer;">
+          <input type="checkbox" id="userIsActive" checked> Active Account
+        </label>
+        
+        <button type="submit" class="primary" style="margin-top: 20px; width: 100%;">Save User</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+  <script src="/static/app.js?v=20260813-v5"></script>
+</body>
+</html>
