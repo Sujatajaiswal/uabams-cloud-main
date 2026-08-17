@@ -968,6 +968,47 @@ async def startup() -> None:
                     ALTER TABLE calibration_versions ADD COLUMN IF NOT EXISTS bogie                      JSONB;
                     ALTER TABLE calibration_versions ADD COLUMN IF NOT EXISTS encoder                    JSONB;
 
+                    CREATE TABLE IF NOT EXISTS zones (
+                        id SERIAL PRIMARY KEY,
+                        code VARCHAR(50) UNIQUE NOT NULL,
+                        name VARCHAR(255) NOT NULL
+                    );
+                    CREATE TABLE IF NOT EXISTS divisions (
+                        id SERIAL PRIMARY KEY,
+                        zone_id INTEGER REFERENCES zones(id) ON DELETE CASCADE,
+                        code VARCHAR(50) NOT NULL,
+                        name VARCHAR(255) NOT NULL,
+                        UNIQUE(zone_id, code)
+                    );
+                    CREATE TABLE IF NOT EXISTS sections (
+                        id SERIAL PRIMARY KEY,
+                        division_id INTEGER REFERENCES divisions(id) ON DELETE CASCADE,
+                        code VARCHAR(50) NOT NULL,
+                        name VARCHAR(255) NOT NULL,
+                        start_km DOUBLE PRECISION,
+                        end_km DOUBLE PRECISION,
+                        UNIQUE(division_id, code)
+                    );
+                    
+                    INSERT INTO zones (code, name) VALUES ('NCR', 'North Central Railway (NCR)') ON CONFLICT (code) DO NOTHING;
+                    INSERT INTO zones (code, name) VALUES ('SR', 'Southern Railway (SR)') ON CONFLICT (code) DO NOTHING;
+                    
+                    INSERT INTO divisions (zone_id, code, name) 
+                    SELECT id, 'Prayagraj', 'Prayagraj Division' FROM zones WHERE code = 'NCR'
+                    ON CONFLICT (zone_id, code) DO NOTHING;
+                    
+                    INSERT INTO divisions (zone_id, code, name) 
+                    SELECT id, 'Chennai', 'Chennai Division' FROM zones WHERE code = 'SR'
+                    ON CONFLICT (zone_id, code) DO NOTHING;
+                    
+                    INSERT INTO sections (division_id, code, name, start_km, end_km) 
+                    SELECT id, 'ABC-XYZ', 'ABC - XYZ', 0, 100 FROM divisions WHERE code = 'Prayagraj'
+                    ON CONFLICT (division_id, code) DO NOTHING;
+                    
+                    INSERT INTO sections (division_id, code, name, start_km, end_km) 
+                    SELECT id, 'Section-1', 'Section 1 (KM 0 - 127)', 0, 127 FROM divisions WHERE code = 'Chennai'
+                    ON CONFLICT (division_id, code) DO NOTHING;
+
                     CREATE TABLE IF NOT EXISTS users (
                         id SERIAL PRIMARY KEY,
                         username VARCHAR(255) UNIQUE NOT NULL,
@@ -3963,3 +4004,45 @@ async def delete_user(user_id: int, request: Request):
             await conn.execute("DELETE FROM users WHERE id = $1", user_id)
             return {"status": "success", "message": "User deleted"}
     return {"status": "error"}
+
+
+@app.get("/api/v1/hierarchy/zones")
+async def get_zones(request: Request):
+    if not is_operator_authenticated(request):
+        raise HTTPException(status_code=401, detail="Login required")
+    if not db.pg_pool: return []
+    async with db.pg_pool.acquire() as conn:
+        records = await conn.fetch("SELECT id, code, name FROM zones ORDER BY name ASC")
+    return [dict(r) for r in records]
+
+@app.get("/api/v1/hierarchy/divisions")
+async def get_divisions(request: Request, zone_code: str = None):
+    if not is_operator_authenticated(request):
+        raise HTTPException(status_code=401, detail="Login required")
+    if not db.pg_pool: return []
+    async with db.pg_pool.acquire() as conn:
+        if zone_code:
+            records = await conn.fetch("""
+                SELECT d.id, d.code, d.name, d.zone_id 
+                FROM divisions d JOIN zones z ON d.zone_id = z.id 
+                WHERE z.code = $1 ORDER BY d.name ASC
+            """, zone_code)
+        else:
+            records = await conn.fetch("SELECT id, code, name, zone_id FROM divisions ORDER BY name ASC")
+    return [dict(r) for r in records]
+
+@app.get("/api/v1/hierarchy/sections")
+async def get_sections(request: Request, division_code: str = None):
+    if not is_operator_authenticated(request):
+        raise HTTPException(status_code=401, detail="Login required")
+    if not db.pg_pool: return []
+    async with db.pg_pool.acquire() as conn:
+        if division_code:
+            records = await conn.fetch("""
+                SELECT s.id, s.code, s.name, s.division_id, s.start_km, s.end_km 
+                FROM sections s JOIN divisions d ON s.division_id = d.id 
+                WHERE d.code = $1 ORDER BY s.name ASC
+            """, division_code)
+        else:
+            records = await conn.fetch("SELECT id, code, name, division_id, start_km, end_km FROM sections ORDER BY name ASC")
+    return [dict(r) for r in records]

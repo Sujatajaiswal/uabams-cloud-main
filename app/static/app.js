@@ -359,6 +359,7 @@ function initializeMaps() {
       maxZoom: 19,
     }).addTo(maps[slotIndex]);
     layers[slotIndex] = L.layerGroup().addTo(maps[slotIndex]);
+
   });
 }
 
@@ -387,9 +388,11 @@ function dashboardAlertToMapPoint(alert) {
 }
 
 function jitterPoint(lat, lon, index) {
-  if (!index) return [Number(lat), Number(lon)];
-  const angle = (index * 2 * Math.PI) / 8;
-  const offset = 0.0004 * index;
+  if (!index || index === 0) return [Number(lat), Number(lon)];
+  // Very tiny spiral offset (approx 2 to 10 meters) so overlapping markers fan out slightly
+  // but stay glued to the thick route line
+  const angle = index * 2.4; 
+  const offset = 0.00005 + (0.00001 * (index % 5)); 
   return [Number(lat) + offset * Math.sin(angle), Number(lon) + offset * Math.cos(angle)];
 }
 
@@ -646,18 +649,19 @@ function renderAlertSummary(alerts) {
 
 window.focusAlertOnMap = function(lat, lon) {
   if (lat == null || lon == null) return;
-  if (window.maps) {
-    window.maps.forEach(map => {
-      if (map) {
-        map.flyTo([lat, lon], 15, { duration: 1.5 });
-      }
-    });
-  }
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  Object.keys(maps).forEach(gatewayId => {
+    const map = maps[gatewayId];
+    if (map) {
+      map.flyTo([lat, lon], 17, { duration: 1.5 });
+      // Optionally open popup if we had reference to markers, but just zooming is fine.
+    }
+  });
 };
 
 function renderAlerts(alerts) {
   setHtml('alertsTable', alerts.length ? alerts.map((alert) => `
-    <tr style="cursor: pointer;" onclick="focusAlertOnMap(${alert.latitude}, ${alert.longitude})">
+    <tr>
       <td>${formatDate(alert.createdAt)}</td>
       <td>${alert.gatewayId || '-'}</td>
       <td>${alert.zone || 'NCR'}</td>
@@ -665,7 +669,11 @@ function renderAlerts(alerts) {
       <td>${alert.section || 'ABC-XYZ'}</td>
       <td>${alert.peakValueG ?? '-'}</td>
       <td><span class="badge ${alert.alert}">${alert.alert || '-'}</span></td>
-      <td>${alert.latitude ?? '-'}, ${alert.longitude ?? '-'}</td>
+      <td>
+        ${alert.latitude && alert.longitude ? 
+          `<button class="secondary" style="padding: 4px 8px; font-size: 12px;" onclick="focusAlertOnMap(${alert.latitude}, ${alert.longitude})"><i class="bi bi-geo-alt-fill"></i> View on Map</button>` 
+          : '-'}
+      </td>
     </tr>
   `).join('') : '<tr><td colspan="8">No alerts found.</td></tr>');
 }
@@ -719,24 +727,44 @@ function trainIconHtml(bearing) {
 function drawColoredRoute(layer, points) {
   if (!layer || points.length < 2) return;
 
+  const latlngs = [];
   for (let i = 1; i < points.length; i += 1) {
     const previous = points[i - 1];
     const current = points[i];
     const severity = normalizeAlert(current.color);
-    L.polyline(
-      [[Number(previous.lat), Number(previous.lon)], [Number(current.lat), Number(current.lon)]],
-      {
-        color: alertColor(severity),
-        weight: 6,
-        opacity: 0.9,
-        lineCap: 'round',
-        lineJoin: 'round',
-        smoothFactor: 1.2,
-        className: 'route-line',
-      }
-    ).addTo(layer);
+    const p1 = [Number(previous.lat), Number(previous.lon)];
+    const p2 = [Number(current.lat), Number(current.lon)];
+    latlngs.push(p1);
+    if (i === points.length - 1) latlngs.push(p2);
+
+    L.polyline([p1, p2], {
+      color: alertColor(severity),
+      weight: 6,
+      opacity: 0.9,
+      lineCap: 'round',
+      lineJoin: 'round',
+      smoothFactor: 1.2,
+      className: 'map-route-polyline',
+    }).addTo(layer);
+  }
+
+  if (window.L.polylineDecorator && latlngs.length > 1) {
+    L.polylineDecorator(L.polyline(latlngs), {
+      patterns: [
+        {
+          offset: '5%',
+          repeat: '100px',
+          symbol: L.Symbol.arrowHead({
+            pixelSize: 14,
+            polygon: false,
+            pathOptions: { stroke: true, weight: 3, color: '#1f2937', opacity: 0.8 }
+          })
+        }
+      ]
+    }).addTo(layer);
   }
 }
+
 
 function renderMaps(alerts, gateways, rmsPoints = [], mapAlerts = []) {
   const selectedGateway = selectedGatewayValue();
@@ -792,18 +820,42 @@ function renderMaps(alerts, gateways, rmsPoints = [], mapAlerts = []) {
 
     drawColoredRoute(layer, routePoints);
 
+
+    // Draw Heatmap (Deferred to avoid Canvas 0 width error when unhiding map)
+    if (window.L.heatLayer && alertPoints.length > 0) {
+      setTimeout(() => {
+        if (!visibleIds.includes(gatewayId)) return;
+        const heatPoints = alertPoints.map(p => {
+          const snapped = snapToRoute(p.lat, p.lon, routePoints);
+          const severity = normalizeAlert(p.color);
+          const intensity = severity === 'RED' ? 1.0 : severity === 'YELLOW' ? 0.5 : 0.2;
+          return [snapped[0], snapped[1], intensity];
+        });
+        L.heatLayer(heatPoints, {
+          radius: 35,
+          blur: 25,
+          maxZoom: 14,
+          gradient: {0.2: 'lime', 0.5: 'yellow', 1.0: 'red'}
+        }).addTo(layer);
+      }, 150);
+    }
+    
     alertPoints.forEach((point, index) => {
       const severity = normalizeAlert(point.color);
       if (severity !== 'RED' && severity !== 'YELLOW' && severity !== 'GREEN') return;
       const snapped = snapToRoute(point.lat, point.lon, routePoints);
       const markerPoint = jitterPoint(snapped[0], snapped[1], index);
-      L.circleMarker(markerPoint, {
-        radius: 8,
-        color: '#ffffff',
-        weight: 2.5,
-        fillColor: severity === 'RED' ? '#c24134' : severity === 'YELLOW' ? '#f59e0b' : '#10b981',
-        fillOpacity: 1,
-      })
+      const iconClass = severity === 'RED' ? 'bi-lightning-fill' : severity === 'YELLOW' ? 'bi-exclamation-triangle-fill' : 'bi-info-circle-fill';
+      const iconColor = severity === 'RED' ? '#ef4444' : severity === 'YELLOW' ? '#f59e0b' : '#10b981';
+      
+      const customIcon = L.divIcon({
+        className: 'custom-alert-icon',
+        html: `<div style="color: ${iconColor}; font-size: 20px; text-shadow: 1px 1px 2px rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center;"><i class="bi ${iconClass}"></i></div>`,
+        iconSize: [24, 24],
+        iconAnchor: [12, 12],
+      });
+
+      L.marker(markerPoint, { icon: customIcon })
         .addTo(layer)
         .bindPopup(routePopup(point));
     });
@@ -981,7 +1033,11 @@ function renderGatewayDetails(data) {
       <td>${formatDate(alert.createdAt)}</td>
       <td>${alert.peakValueG ?? '-'}</td>
       <td><span class="badge ${alert.alert}">${alert.alert || '-'}</span></td>
-      <td>${alert.latitude ?? '-'}, ${alert.longitude ?? '-'}</td>
+      <td>
+        ${alert.latitude && alert.longitude ? 
+          `<button class="secondary" style="padding: 4px 8px; font-size: 12px;" onclick="focusLocationOnMap(${alert.latitude}, ${alert.longitude})"><i class="bi bi-geo-alt-fill"></i> View on Map</button>` 
+          : '-'}
+      </td>
     </tr>
   `).join('') : '<tr><td colspan="4">No alerts for selected gateway.</td></tr>');
 
@@ -2781,3 +2837,61 @@ function filterByAlertLevel(level) {
   }
 }
 window.filterByAlertLevel = filterByAlertLevel;
+
+
+async function loadHierarchyData(type, parentCode = null) {
+  try {
+    let url = `/api/v1/hierarchy/${type}`;
+    if (parentCode) {
+      const param = type === 'divisions' ? 'zone_code' : 'division_code';
+      url += `?${param}=${encodeURIComponent(parentCode)}`;
+    }
+    const token = localStorage.getItem('uabams_token') || sessionStorage.getItem('uabams_token');
+    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+    const res = await fetch(url, { headers });
+    if (!res.ok) return [];
+    return await res.json();
+  } catch (e) {
+    console.error(`Failed to load ${type}`, e);
+    return [];
+  }
+}
+
+async function populateDropdown(selectId, type, parentCode = null, defaultText) {
+  const select = document.getElementById(selectId);
+  if (!select) return;
+  select.innerHTML = `<option value="">${defaultText}</option>`;
+  const data = await loadHierarchyData(type, parentCode);
+  data.forEach(item => {
+    const opt = document.createElement('option');
+    opt.value = item.code;
+    opt.textContent = item.name;
+    select.appendChild(opt);
+  });
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+  await populateDropdown('filterZone', 'zones', null, 'All Zones');
+  await populateDropdown('filterDivision', 'divisions', null, 'All Divisions');
+  await populateDropdown('filterSection', 'sections', null, 'All Sections');
+  
+  document.getElementById('filterZone')?.addEventListener('change', async (e) => {
+    const val = e.target.value;
+    await populateDropdown('filterDivision', 'divisions', val || null, 'All Divisions');
+    await populateDropdown('filterSection', 'sections', null, 'All Sections');
+    state.filterZone = val || null;
+    if (state.dashboard) renderDashboard(state.dashboard);
+  });
+  
+  document.getElementById('filterDivision')?.addEventListener('change', async (e) => {
+    const val = e.target.value;
+    await populateDropdown('filterSection', 'sections', val || null, 'All Sections');
+    state.filterDivision = val || null;
+    if (state.dashboard) renderDashboard(state.dashboard);
+  });
+  
+  document.getElementById('filterSection')?.addEventListener('change', (e) => {
+    state.filterSection = e.target.value || null;
+    if (state.dashboard) renderDashboard(state.dashboard);
+  });
+});
