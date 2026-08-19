@@ -1491,7 +1491,7 @@ function boot() {
   setStatus('Live', 'ok');
   $('searchBtn')?.addEventListener('click', loadDashboard);
   $('dashboardGateway')?.addEventListener('change', () => {
-    logClientEvent('gateway_filter_change', { message: selectedGatewayValue() || 'All Gateways' });
+    
     if (state.dashboard) renderDashboard(state.dashboard);
     refreshVisibleMaps(180);
     if (lastLoadedTrainNo) renderTrainPosition(lastLoadedTrainNo);
@@ -1504,7 +1504,7 @@ function boot() {
   $('cleanupBtn')?.addEventListener('click', cleanupData);
   $('loadLogsBtn')?.addEventListener('click', loadLogs);
   document.querySelectorAll('.tab').forEach((button) => button.addEventListener('click', () => {
-    logClientEvent('tab_change', { message: button.dataset.tab });
+    
     selectTab(button.dataset.tab);
   }));
   $('filterZone')?.addEventListener('change', (e) => {

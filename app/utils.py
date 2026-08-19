@@ -14,9 +14,9 @@ from hashlib import sha256
 from app.database import db, settings
 
 OPERATOR_COOKIE_NAME = "uabams_operator_session"
-OPERATOR_SESSION_HOURS = 168
-SPATIAL_RETENTION_DAYS = 90
-TIME_DOMAIN_RETENTION_DAYS = 30
+OPERATOR_SESSION_HOURS = 12
+SPATIAL_RETENTION_DAYS = 30
+TIME_DOMAIN_RETENTION_DAYS = 7
 TIME_DOMAIN_DIR = os.environ.get("TIME_DOMAIN_DIR", "/app/time_domain")
 
 def utc_now() -> datetime:
