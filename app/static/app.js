@@ -956,11 +956,11 @@ async function loadLogs() {
       const severity = getLogSeverity(log);
       let badgeStyle = '';
       if (severity === 'CRITICAL') {
-        badgeStyle = 'background: rgba(239, 68, 68, 0.12); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.35);';
+        badgeStyle = 'background: rgba(239, 68, 68, 0.12); color: #dc2626; border: 1px solid rgba(239, 68, 68, 0.35);';
       } else if (severity === 'WARNING') {
-        badgeStyle = 'background: rgba(245, 158, 11, 0.12); color: #fde047; border: 1px solid rgba(245, 158, 11, 0.35);';
+        badgeStyle = 'background: rgba(245, 158, 11, 0.12); color: #d97706; border: 1px solid rgba(245, 158, 11, 0.35);';
       } else {
-        badgeStyle = 'background: rgba(16, 185, 129, 0.12); color: #a7f3d0; border: 1px solid rgba(16, 185, 129, 0.35);';
+        badgeStyle = 'background: rgba(16, 185, 129, 0.12); color: #059669; border: 1px solid rgba(16, 185, 129, 0.35);';
       }
       
       const badgeHtml = `<span style="padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: bold; display: inline-block; text-transform: uppercase; ${badgeStyle}">${severity}</span>`;
@@ -1551,7 +1551,7 @@ function boot() {
 
   renderGatewayCards(dashboardGatewayIds);
   initializeReports();
-  logBrowserLocation('dashboard_loaded');
+  
 }
 
 window.addEventListener('error', (event) => {
