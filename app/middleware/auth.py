@@ -47,12 +47,10 @@ async def async_gateway_id_for_key(api_key: str | None) -> str | None:
     # 2. Check database table (gateway_auth)
     try:
         from app.database import db
-        auth_doc = await db.gateway_auth.find_one({"secret_key": api_key_clean})
-        if not auth_doc:
-            auth_doc = await db.gateway_auth.find_one({"apiKey": api_key_clean})
-        if auth_doc:
-            raw_id = auth_doc.get("gatewayId") or auth_doc.get("gateway_id")
-            return normalize_gateway_id(raw_id)
+        if db.pg_pool:
+            row = await db.pg_pool.fetchrow("SELECT gateway_id FROM gateway_auth WHERE secret_key = $1", api_key_clean)
+            if row:
+                return normalize_gateway_id(row['gateway_id'])
     except Exception as e:
         print(f"Error querying gateway_auth table for API key: {e}")
         
@@ -91,17 +89,21 @@ class GatewayAuthMiddleware(BaseHTTPMiddleware):
                 request.state.api_key = api_key
             else:
                 from app.database import db
-                session = await db.handshake_sessions.find_one({"sessionId": session_id})
+                if db.pg_pool:
+                    session = await db.pg_pool.fetchrow("SELECT gateway_id, verified, session_key_hex FROM handshake_sessions WHERE session_id = $1", session_id)
+                else:
+                    session = None
+
                 if not session or not session.get("verified"):
                     return JSONResponse(
                         status_code=403,
                         content={"detail": "Invalid or expired session"},
                     )
-                gateway_id = normalize_gateway_id(session["gatewayId"])
+                gateway_id = normalize_gateway_id(session["gateway_id"])
                 request.state.gateway_id = gateway_id
                 request.state.train_id = train_id
                 request.state.session_id = session_id
-                request.state.session_key = bytes.fromhex(session["sessionKeyHex"])
+                request.state.session_key = bytes.fromhex(session["session_key_hex"])
 
             if supplied_gateway_id:
                 norm_supplied = normalize_gateway_id(supplied_gateway_id)

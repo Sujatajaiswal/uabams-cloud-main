@@ -1,7 +1,6 @@
 import os
 from functools import lru_cache
 from dotenv import load_dotenv
-from app.db_wrapper import DatabaseWrapper
 
 load_dotenv(override=True)
 
@@ -29,4 +28,8 @@ def get_settings() -> dict[str, str]:
 
 settings = get_settings()
 
-db = DatabaseWrapper(pg_pool=None)
+class Database:
+    def __init__(self):
+        self.pg_pool = None
+
+db = Database()
