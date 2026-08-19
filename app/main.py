@@ -285,7 +285,7 @@ class ActivityLogMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
         path = request.url.path
-        if path.startswith(("/static", "/docs", "/openapi.json", "/api/v1/logs")):
+        if request.method == "GET" or path.startswith(("/static", "/docs", "/openapi.json", "/api/v1/logs")):
             return response
         username = operator_username(request)
         if username:
