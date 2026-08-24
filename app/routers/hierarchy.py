@@ -9,6 +9,34 @@ from app.utils import  serialize, is_operator_authenticated, operator_session_pa
 
 router = APIRouter()
 
+
+def _axis_summary(axes: Any) -> tuple[float | None, str | None]:
+    if isinstance(axes, str):
+        try:
+            axes = json.loads(axes)
+        except (TypeError, json.JSONDecodeError):
+            return None, None
+    if not isinstance(axes, dict):
+        return None, None
+
+    values = []
+    for axis in axes.values():
+        if not isinstance(axis, dict):
+            continue
+        value = axis.get("peakValueG")
+        if value is None:
+            value = axis.get("rmsValue")
+        try:
+            values.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    if not values:
+        return None, None
+
+    peak_g = max(values)
+    alert = "RED" if peak_g > 80 else "YELLOW" if peak_g > 50 else "GREEN"
+    return peak_g, alert
+
 @router.get("/api/v1/trains")
 async def list_trains():
     if not db.pg_pool:
@@ -116,11 +144,9 @@ async def train_dashboard(train_no: str, request: Request):
 
             fallback_peak_g, fallback_alert = None, None
             if latest_peak:
-                axes_val = latest_peak.get("axes")
-                fallback_peak_g, fallback_alert = (axes_val)
+                fallback_peak_g, fallback_alert = _axis_summary(latest_peak.get("axes"))
             if not fallback_peak_g and latest_rms:
-                axes_val = latest_rms.get("axes")
-                fallback_peak_g, fallback_alert = (axes_val)
+                fallback_peak_g, fallback_alert = _axis_summary(latest_rms.get("axes"))
 
             card["latestPeakG"] = fallback_peak_g
             card["latestAlert"] = fallback_alert
