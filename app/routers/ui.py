@@ -119,3 +119,10 @@ async def get_open_api_endpoint(request: Request):
         raise HTTPException(status_code=403, detail="Admin access required for API documentation")
     # request.app.routes is used instead of app.routes
     return JSONResponse(get_openapi(title=request.app.title, version=request.app.version, routes=request.app.routes))
+
+@router.get('/logout')
+async def logout(request: Request):
+    response = RedirectResponse('/login', status_code=303)
+    response.delete_cookie(OPERATOR_COOKIE_NAME)
+    return response
+
