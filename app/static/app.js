@@ -473,17 +473,11 @@ function renderDashboard(data) {
     const tabId = button.dataset.tab;
     
     // Hide tabs based on RBAC permissions
-    if (tabId === 'users' && !perms.can_manage_users) {
-      button.style.display = 'none';
-    } else if (tabId === 'calibration' && !perms.can_configure_thresholds) {
+    if (['calibration', 'archives', 'reset', 'logs'].includes(tabId) && userRole !== 'admin') {
+      button.style.display = 'none'; // Strictly Admin only based on user request
+    } else if (tabId === 'users' && !perms.can_manage_users) {
       button.style.display = 'none';
     } else if (tabId === 'alerts' && !perms.can_view_alerts) {
-      button.style.display = 'none';
-    } else if (tabId === 'reset' && !perms.can_configure_thresholds) {
-      button.style.display = 'none';
-    } else if (tabId === 'logs' && !perms.can_manage_users) {
-      button.style.display = 'none';
-    } else if (tabId === 'archives' && !perms.can_view_alerts) {
       button.style.display = 'none';
     } else {
       button.style.display = '';
@@ -497,9 +491,9 @@ function renderDashboard(data) {
   if (activeTabId === 'users' && !perms.can_manage_users) selectTab('overview');
   if (activeTabId === 'calibration' && !perms.can_configure_thresholds) selectTab('overview');
   if (activeTabId === 'alerts' && !perms.can_view_alerts) selectTab('overview');
-  if (activeTabId === 'reset' && !perms.can_configure_thresholds) selectTab('overview');
-  if (activeTabId === 'logs' && !perms.can_manage_users) selectTab('overview');
-  if (activeTabId === 'archives' && !perms.can_view_alerts) selectTab('overview');
+  if (['calibration', 'archives', 'reset', 'logs'].includes(activeTabId) && userRole !== 'admin') {
+    selectTab('overview');
+  }
 
   const oldGatewayIds = [...dashboardGatewayIds];
   state.dashboard = data;
