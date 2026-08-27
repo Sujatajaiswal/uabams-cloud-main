@@ -464,6 +464,10 @@ function renderDashboard(data) {
   if (swaggerBtn) {
     swaggerBtn.style.display = (userRole === 'admin') ? '' : 'none';
   }
+  const usersLink = document.getElementById('dropdownUsersLink');
+  if (usersLink) {
+    usersLink.style.display = perms.can_manage_users ? '' : 'none';
+  }
 
   document.querySelectorAll('.tab').forEach((button) => {
     const tabId = button.dataset.tab;
@@ -475,8 +479,12 @@ function renderDashboard(data) {
       button.style.display = 'none';
     } else if (tabId === 'alerts' && !perms.can_view_alerts) {
       button.style.display = 'none';
-    } else if (['reset', 'logs'].includes(tabId) && userRole !== 'admin') {
-      button.style.display = 'none'; // Keep these strictly admin for now
+    } else if (tabId === 'reset' && !perms.can_configure_thresholds) {
+      button.style.display = 'none';
+    } else if (tabId === 'logs' && !perms.can_manage_users) {
+      button.style.display = 'none';
+    } else if (tabId === 'archives' && !perms.can_view_alerts) {
+      button.style.display = 'none';
     } else {
       button.style.display = '';
     }
@@ -489,7 +497,9 @@ function renderDashboard(data) {
   if (activeTabId === 'users' && !perms.can_manage_users) selectTab('overview');
   if (activeTabId === 'calibration' && !perms.can_configure_thresholds) selectTab('overview');
   if (activeTabId === 'alerts' && !perms.can_view_alerts) selectTab('overview');
-  if (['reset', 'logs'].includes(activeTabId) && userRole !== 'admin') selectTab('overview');
+  if (activeTabId === 'reset' && !perms.can_configure_thresholds) selectTab('overview');
+  if (activeTabId === 'logs' && !perms.can_manage_users) selectTab('overview');
+  if (activeTabId === 'archives' && !perms.can_view_alerts) selectTab('overview');
 
   const oldGatewayIds = [...dashboardGatewayIds];
   state.dashboard = data;
@@ -1473,9 +1483,7 @@ async function applyRoleBasedAccess() {
         usernameEl.textContent = data.username.toUpperCase();
       }
 
-      if (data.role === 'operator') {
-        document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'none');
-      }
+      // Handled entirely by granular permissions in renderDashboard()
     }
   } catch (err) {
     console.error('Failed to fetch user role', err);
