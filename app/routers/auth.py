@@ -409,3 +409,18 @@ async def delete_user(user_id: int, request: Request):
         await db.pg_pool.execute("DELETE FROM users WHERE id = $1", user_id)
         return {"status": "success", "message": "User deleted"}
     return {"status": "error"}
+
+@router.get('/api/v1/auth/me')
+async def get_me(request: Request):
+    payload = operator_session_payload(request)
+    if not payload:
+        raise HTTPException(status_code=401, detail='Not authenticated')
+    return {
+        'username': payload.get('sub', ''),
+        'role': payload.get('role', 'operator').lower(),
+        'permissions': {
+            'can_configure_thresholds': payload.get('can_configure_thresholds', False),
+            'can_manage_users': payload.get('can_manage_users', False),
+            'can_view_alerts': payload.get('can_view_alerts', True)
+        }
+    }

@@ -1477,7 +1477,26 @@ async function applyRoleBasedAccess() {
         usernameEl.textContent = data.username.toUpperCase();
       }
 
-      // Handled entirely by granular permissions in renderDashboard()
+      // Hide tabs immediately on load based on role/permissions
+      const userRole = (data.role || 'operator').toLowerCase();
+      const perms = data.permissions || {};
+      
+      const swaggerBtn = document.getElementById('swaggerBtn') || document.querySelector('a[href="/docs"]');
+      if (swaggerBtn) swaggerBtn.style.display = (userRole === 'admin') ? '' : 'none';
+      
+      const usersLink = document.getElementById('dropdownUsersLink');
+      if (usersLink) usersLink.style.display = perms.can_manage_users ? '' : 'none';
+
+      document.querySelectorAll('.tab').forEach((button) => {
+        const tabId = button.dataset.tab;
+        if (['calibration', 'archives', 'reset', 'logs'].includes(tabId) && userRole !== 'admin') {
+          button.style.display = 'none';
+        } else if (tabId === 'users' && !perms.can_manage_users) {
+          button.style.display = 'none';
+        } else if (tabId === 'alerts' && !perms.can_view_alerts) {
+          button.style.display = 'none';
+        }
+      });
     }
   } catch (err) {
     console.error('Failed to fetch user role', err);
