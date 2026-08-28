@@ -2637,7 +2637,6 @@ window.focusLocationOnMap = focusLocationOnMap;
 
 
 boot();
-
 // ==========================================
 // User Management Logic
 // ==========================================
@@ -2646,6 +2645,7 @@ const addUserBtn = document.getElementById('addUserBtn');
 const userModal = document.getElementById('userModal');
 const closeUserModal = document.getElementById('closeUserModal');
 const userForm = document.getElementById('userForm');
+let currentEditingUser = null;
 
 async function loadUsersView() {
   if (!usersTable) return;
@@ -2682,6 +2682,7 @@ async function loadUsersView() {
 
 if (addUserBtn) {
   addUserBtn.addEventListener('click', () => {
+    currentEditingUser = null;
     document.getElementById('userModalTitle').textContent = 'Add User';
     userForm.reset();
     document.getElementById('userId').value = '';
@@ -2726,6 +2727,21 @@ if (userForm) {
           is_active: isActive
         };
         if (password) payload.password = password;
+
+          if (currentEditingUser) {
+            const noChanges = !password && 
+              currentEditingUser.role.toLowerCase() === role &&
+              currentEditingUser.can_view_alerts === canViewAlerts &&
+              currentEditingUser.can_configure_thresholds === canConfigureThresholds &&
+              currentEditingUser.can_manage_users === canManageUsers &&
+              currentEditingUser.is_active === isActive;
+              
+            if (noChanges) {
+              alert('No changes were made.');
+              userModal.style.display = 'none';
+              return;
+            }
+          }
         
         await fetch(`/api/v1/users/${id}`, {
           method: 'PUT',
@@ -2762,8 +2778,9 @@ if (userForm) {
   });
 }
 
-window.openEditUser = function(user) {
-  document.getElementById('userModalTitle').textContent = 'Edit User';
+  window.openEditUser = function(user) {
+    currentEditingUser = user;
+    document.getElementById('userModalTitle').textContent = 'Edit User';
   userForm.reset();
   
   document.getElementById('userId').value = user.id;
