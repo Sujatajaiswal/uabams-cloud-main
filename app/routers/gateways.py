@@ -452,7 +452,8 @@ async def gateway_details(train_no: str, gateway_id: str):
                    archive_sha256 AS "archiveSha256", source, peak_axis AS "peakAxis", peak_value_g AS "peakValueG",
                    speed_kmph AS "speedKmph", alert, session_status AS "sessionStatus", zone, division, section,
                    archived_at AS "archivedAt", created_at AS "createdAt"
-            FROM alert_events WHERE train_no = $1 AND gateway_id = $2 AND session_status != 'archived' ORDER BY created_at DESC LIMIT 1
+            FROM alert_events WHERE train_no = $1 AND gateway_id = $2 AND session_status != 'archived' 
+            ORDER BY CASE alert WHEN 'RED' THEN 1 WHEN 'YELLOW' THEN 2 WHEN 'GREEN' THEN 3 ELSE 4 END ASC, created_at DESC LIMIT 1
         """, train_no, gateway_id)
         latest_alert = dict(latest_alert_row) if latest_alert_row else None
 

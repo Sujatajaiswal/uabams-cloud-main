@@ -305,7 +305,16 @@ function lastDataTime(train, gateways, alerts, archives) {
 }
 
 function latestAlertFor(alerts, gatewayId) {
-  return alerts.find((alert) => alert.gatewayId === gatewayId) || null;
+  const gwAlerts = alerts.filter((alert) => alert.gatewayId === gatewayId);
+  if (!gwAlerts.length) return null;
+  
+  const hasRed = gwAlerts.find(a => normalizeAlert(a.alert) === 'RED');
+  if (hasRed) return hasRed;
+  
+  const hasYellow = gwAlerts.find(a => normalizeAlert(a.alert) === 'YELLOW');
+  if (hasYellow) return hasYellow;
+  
+  return gwAlerts[0];
 }
 
 function archiveCountFor(archives, gatewayId) {
