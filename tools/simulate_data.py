@@ -68,12 +68,17 @@ def build_rms(upload_index: int, records: int) -> bytes:
     return b"".join(chunks)
 
 
-def build_peak(upload_index: int, records: int) -> bytes:
+def build_peak(upload_index: int, records: int, demo_alert: bool = False, demo_clean: bool = False) -> bytes:
     output = bytearray()
     for i in range(records):
         window_start = upload_index * 50000 + i * 50000
         window_end = window_start + 50000
-        max_g = severity_peak(upload_index, i * 3)
+        if demo_clean:
+            if i == 0: max_g = 85.0
+            elif i == 1: max_g = 60.0
+            else: max_g = 30.0
+        else:
+            max_g = 92.0 if demo_alert and i == 0 else severity_peak(upload_index, i * 3)
         alert_generated = max_g > 80
         output += struct.pack(PEAK_HEADER_FORMAT, window_start, window_end, random.uniform(75, 105), 0xFF, alert_generated)
         for axis in range(AXIS_COUNT):
@@ -103,7 +108,10 @@ def build_zip(args: argparse.Namespace, upload_index: int) -> bytes:
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("session_metadata.json", json.dumps(metadata, indent=2))
         zf.writestr("rms/rms_25cm.bin", build_rms(upload_index, args.rms_records))
-        zf.writestr("peak/peak_50m.bin", build_peak(upload_index, args.peak_records))
+        zf.writestr(
+            "peak/peak_50m.bin",
+            build_peak(upload_index, args.peak_records, args.demo_alert, getattr(args, 'demo_clean', False)),
+        )
         zf.writestr("faults/faults.bin", build_fault(upload_index))
     return buffer.getvalue()
 
@@ -217,10 +225,21 @@ def main() -> None:
     parser.add_argument("--count", type=int, default=200)
     parser.add_argument("--rms-records", type=int, default=50)
     parser.add_argument("--peak-records", type=int, default=2)
+    parser.add_argument(
+        "--demo-alert",
+        action="store_true",
+        help="Force the first peak record to create a RED alert at a mapped route location",
+    )
+    parser.add_argument("--demo-clean", action="store_true", help="Force exactly 3 peaks (RED, YELLOW, GREEN)")
     parser.add_argument("--timeout", type=int, default=30)
     parser.add_argument("--save-dir", default="")
     parser.add_argument("--secure", action="store_true", help="Enable ECDH handshake and symmetric encryption")
     args = parser.parse_args()
+
+    if args.demo_alert or args.demo_clean:
+        args.count = 1
+        args.peak_records = 3 if args.demo_clean else max(args.peak_records, 1)
+        print(f"Demo train: {args.train_id}")
 
     save_dir = Path(args.save_dir) if args.save_dir else None
     if save_dir:
