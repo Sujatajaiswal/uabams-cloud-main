@@ -575,10 +575,10 @@ function renderDashboard(data) {
     const gw = gateways.find((item) => item.gatewayId === gatewayId) || { gatewayId, trainId: train.trainNo, online: false };
     const latest = latestAlertFor(alerts, gatewayId);
     
-    const latestPeakG = (gw.latestPeakG !== undefined && gw.latestPeakG !== null) ? gw.latestPeakG : (latest ? latest.peakValueG : null);
-    const latestAlertVal = gw.latestAlert ? gw.latestAlert : (latest ? latest.alert : null);
-    const latestLat = (gw.latestLatitude !== undefined && gw.latestLatitude !== null) ? gw.latestLatitude : (latest ? latest.latitude : null);
-    const latestLon = (gw.latestLongitude !== undefined && gw.latestLongitude !== null) ? gw.latestLongitude : (latest ? latest.longitude : null);
+    const latestPeakG = latest ? latest.peakValueG : ((gw.latestPeakG !== undefined && gw.latestPeakG !== null) ? gw.latestPeakG : null);
+    const latestAlertVal = latest ? latest.alert : (gw.latestAlert ? gw.latestAlert : null);
+    const latestLat = latest ? latest.latitude : ((gw.latestLatitude !== undefined && gw.latestLatitude !== null) ? gw.latestLatitude : null);
+    const latestLon = latest ? latest.longitude : ((gw.latestLongitude !== undefined && gw.latestLongitude !== null) ? gw.latestLongitude : null);
 
     const alertStatus = normalizeAlert(latestAlertVal);
     const gatewayAlerts = alerts.filter((a) => a.gatewayId === gatewayId);
