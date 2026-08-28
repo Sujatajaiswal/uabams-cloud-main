@@ -676,9 +676,17 @@ function renderAlertSummary(alerts) {
 window.focusAlertOnMap = function(lat, lon, gatewayId) {
   if (lat == null || lon == null) return;
   window.scrollTo({ top: 0, behavior: 'smooth' });
+  const showAllBtn = document.getElementById('showAllMapsBtn');
   if (gatewayId && maps[gatewayId]) {
+    document.querySelectorAll('.map-card').forEach(card => {
+      if (card.dataset.mapGateway === gatewayId) card.classList.remove('hidden');
+      else card.classList.add('hidden');
+    });
+    if (showAllBtn) showAllBtn.classList.remove('hidden');
     maps[gatewayId].flyTo([lat, lon], 17, { duration: 1.5 });
   } else {
+    document.querySelectorAll('.map-card').forEach(card => card.classList.remove('hidden'));
+    if (showAllBtn) showAllBtn.classList.add('hidden');
     Object.keys(maps).forEach(gwId => {
       const map = maps[gwId];
       if (map) {
@@ -2649,10 +2657,18 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
 function focusLocationOnMap(lat, lon, gatewayId) {
   selectTab('alerts');
   setTimeout(() => {
+    const showAllBtn = document.getElementById('showAllMapsBtn');
     if (gatewayId && maps[gatewayId]) {
+      document.querySelectorAll('.map-card').forEach(card => {
+        if (card.dataset.mapGateway === gatewayId) card.classList.remove('hidden');
+        else card.classList.add('hidden');
+      });
+      if (showAllBtn) showAllBtn.classList.remove('hidden');
       maps[gatewayId].setView([lat, lon], 14);
       maps[gatewayId].invalidateSize();
     } else {
+      document.querySelectorAll('.map-card').forEach(card => card.classList.remove('hidden'));
+      if (showAllBtn) showAllBtn.classList.add('hidden');
       Object.keys(maps).forEach(gwId => {
         const map = maps[gwId];
         if (map) {
@@ -2937,6 +2953,26 @@ async function populateDropdown(selectId, type, parentCode = null, defaultText) 
     select.appendChild(opt);
   });
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+  setupUIHandlers();
+  initializeMaps();
+  loadTrainList();
+
+  const showAllBtn = document.getElementById('showAllMapsBtn');
+  if (showAllBtn) {
+    showAllBtn.addEventListener('click', () => {
+      document.querySelectorAll('.map-card').forEach(card => card.classList.remove('hidden'));
+      showAllBtn.classList.add('hidden');
+      Object.values(maps).forEach((map) => {
+        if (map) map.invalidateSize();
+      });
+    });
+  }
+
+  // Poll gateway status periodically
+  setInterval(checkGatewayStatus, 30000);
+});
 
 document.addEventListener('DOMContentLoaded', async () => {
   await populateDropdown('filterZone', 'zones', null, 'All Zones');
