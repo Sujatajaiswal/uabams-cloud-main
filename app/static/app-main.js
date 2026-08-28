@@ -673,16 +673,19 @@ function renderAlertSummary(alerts) {
   });
 }
 
-window.focusAlertOnMap = function(lat, lon) {
+window.focusAlertOnMap = function(lat, lon, gatewayId) {
   if (lat == null || lon == null) return;
   window.scrollTo({ top: 0, behavior: 'smooth' });
-  Object.keys(maps).forEach(gatewayId => {
-    const map = maps[gatewayId];
-    if (map) {
-      map.flyTo([lat, lon], 17, { duration: 1.5 });
-      // Optionally open popup if we had reference to markers, but just zooming is fine.
-    }
-  });
+  if (gatewayId && maps[gatewayId]) {
+    maps[gatewayId].flyTo([lat, lon], 17, { duration: 1.5 });
+  } else {
+    Object.keys(maps).forEach(gwId => {
+      const map = maps[gwId];
+      if (map) {
+        map.flyTo([lat, lon], 17, { duration: 1.5 });
+      }
+    });
+  }
 };
 
 function renderAlerts(alerts) {
@@ -697,7 +700,7 @@ function renderAlerts(alerts) {
       <td><span class="badge ${alert.alert}">${alert.alert || '-'}</span></td>
       <td>
         ${alert.latitude && alert.longitude ? 
-          `<button class="secondary" style="padding: 4px 8px; font-size: 12px;" onclick="focusAlertOnMap(${alert.latitude}, ${alert.longitude})"><i class="bi bi-geo-alt-fill"></i> View on Map</button>` 
+          `<button class="secondary" style="padding: 4px 8px; font-size: 12px;" onclick="focusAlertOnMap(${alert.latitude}, ${alert.longitude}, '${alert.gatewayId}')"><i class="bi bi-geo-alt-fill"></i> View on Map</button>` 
           : '-'}
       </td>
     </tr>
@@ -1061,7 +1064,7 @@ function renderGatewayDetails(data) {
       <td><span class="badge ${alert.alert}">${alert.alert || '-'}</span></td>
       <td>
         ${alert.latitude && alert.longitude ? 
-          `<button class="secondary" style="padding: 4px 8px; font-size: 12px;" onclick="focusLocationOnMap(${alert.latitude}, ${alert.longitude})"><i class="bi bi-geo-alt-fill"></i> View on Map</button>` 
+          `<button class="secondary" style="padding: 4px 8px; font-size: 12px;" onclick="focusLocationOnMap(${alert.latitude}, ${alert.longitude}, '${alert.gatewayId}')"><i class="bi bi-geo-alt-fill"></i> View on Map</button>` 
           : '-'}
       </td>
     </tr>
@@ -2643,16 +2646,21 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-function focusLocationOnMap(lat, lon) {
+function focusLocationOnMap(lat, lon, gatewayId) {
   selectTab('alerts');
   setTimeout(() => {
-    Object.keys(maps).forEach(gatewayId => {
-      const map = maps[gatewayId];
-      if (map) {
-        map.setView([lat, lon], 14);
-        map.invalidateSize();
-      }
-    });
+    if (gatewayId && maps[gatewayId]) {
+      maps[gatewayId].setView([lat, lon], 14);
+      maps[gatewayId].invalidateSize();
+    } else {
+      Object.keys(maps).forEach(gwId => {
+        const map = maps[gwId];
+        if (map) {
+          map.setView([lat, lon], 14);
+          map.invalidateSize();
+        }
+      });
+    }
   }, 150);
 }
 window.focusLocationOnMap = focusLocationOnMap;
