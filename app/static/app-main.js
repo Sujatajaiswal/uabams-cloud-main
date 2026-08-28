@@ -565,7 +565,20 @@ function renderDashboard(data) {
     latestTripStr = `${formatDate(startTimeVal)}<br>to<br>${formatDate(endTimeVal)}`;
   }
   setHtml('summaryLatestTrip', latestTripStr);
-  setText('summaryStatus', train.status || '-');
+  
+  let health = 'GREEN';
+  let healthText = 'Normal';
+  if (alerts.some(a => normalizeAlert(a.alert) === 'RED')) { health = 'RED'; healthText = 'Critical'; }
+  else if (alerts.some(a => normalizeAlert(a.alert) === 'YELLOW')) { health = 'YELLOW'; healthText = 'Warning'; }
+  
+  const isOnline = onlineCount > 0;
+  setHtml('summaryStatus', `
+    <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
+      <span class="badge ${health}">${healthText} Health</span>
+      <span class="badge ${isOnline ? 'online' : 'offline'}">${isOnline ? 'Online' : 'Offline'}</span>
+    </div>
+  `);
+
   setText('summaryGateways', `${onlineCount}/${allGatewayIds.length || 0}`);
   setText('summaryLastData', formatDate(lastDataTime(train, allGateways, alerts, archives)));
   setText('summaryArchives', archives.length);
