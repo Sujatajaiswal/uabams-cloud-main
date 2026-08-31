@@ -1554,7 +1554,7 @@ body.fullscreen-map-mode .route-map {
   height: calc(100vh - 60px) !important; 
 }
 body.fullscreen-map-mode #showAllMapsBtn { 
-  position: fixed !important; 
+  display: block !important; position: fixed !important; 
   top: 20px; 
   right: 20px; 
   z-index: 100000; pointer-events: auto !important; cursor: pointer !important;
