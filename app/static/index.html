@@ -6,7 +6,7 @@
   <title>UABAMS Dashboard</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="/static/styles.css?v=27?v=20260813-v3">
+  <link rel="stylesheet" href="/static/styles.css?v=32?v=20260813-v3">
 </head>
 <body><button id="showAllMapsBtn" class="secondary hidden" onclick="closeFullscreenMap()"><i class="bi bi-x-circle"></i> Close Map</button>
   <!-- Dummy inputs to capture aggressive browser autofill -->
@@ -387,7 +387,7 @@
             <select id="alarmTypeFilter" class="form-select">
               <option value="All">All</option>
               <option value="Critical">Critical</option>
-              <option value="Maintenance">Maintenance</option>
+              <option value="Warning">Warning</option>
               <option value="Normal">Normal</option>
             </select>
           </div>
@@ -416,12 +416,12 @@
             </div>
           </div>
           <div class="summary-card">
-            <div class="summary-icon maintenance-icon">
+            <div class="summary-icon Warning-icon">
               <i class="bi bi-tools"></i>
             </div>
             <div class="summary-content">
-              <span class="summary-label">Maintenance</span>
-              <strong id="maintenanceAlarmCard" class="summary-value">0</strong>
+              <span class="summary-label">Warning</span>
+              <strong id="WarningAlarmCard" class="summary-value">0</strong>
             </div>
           </div>
           <div class="summary-card">
@@ -704,6 +704,6 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
-  <script src="/static/app-main.js?v=27"></script>
+  <script src="/static/app-main.js?v=32"></script>
 </body>
 </html>
