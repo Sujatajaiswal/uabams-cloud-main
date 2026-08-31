@@ -827,19 +827,19 @@ async def reset_bad_data(
     
     if data.trainNo and data.trainNo.upper() != "ALL":
         args.append(data.trainNo)
-        conds.append(f"train_id = ")
+        conds.append(f"train_id = ${len(args)}")
         
     if data.gatewayId and data.gatewayId != "All Gateways":
         args.append(data.gatewayId)
-        conds.append(f"gateway_id = ")
+        conds.append(f"gateway_id = ${len(args)}")
         
     if data.startTime:
         args.append(data.startTime)
-        conds.append(f"created_at >= ")
+        conds.append(f"created_at >= ${len(args)}")
         
     if data.endTime:
         args.append(data.endTime)
-        conds.append(f"created_at <= ")
+        conds.append(f"created_at <= ${len(args)}")
         
     where_peak = " AND ".join(conds) if conds else "1=1"
     where_alert = where_peak.replace("train_id", "train_no")
@@ -855,11 +855,11 @@ async def reset_bad_data(
         
         args.append(lat - lat_delta)
         args.append(lat + lat_delta)
-        cond_lat = f"latitude BETWEEN  AND "
+        cond_lat = f"latitude BETWEEN ${len(args)-1} AND ${len(args)}"
         
         args.append(lon - lon_delta)
         args.append(lon + lon_delta)
-        cond_lon = f"longitude BETWEEN  AND "
+        cond_lon = f"latitude BETWEEN ${len(args)-1} AND ${len(args)}"
         
         where_peak += f" AND {cond_lat} AND {cond_lon}"
         where_alert += f" AND {cond_lat} AND {cond_lon}"
@@ -874,9 +874,8 @@ async def reset_bad_data(
     # Log activity
     username = operator_username(request) or "admin"
     ip = client_ip(request) or "unknown"
-    action_msg = f"Deleted matching data for train {data.trainNo}"
     await db.pg_pool.execute(
-        "INSERT INTO activity_logs (username, page, action, error_message, ip_address) VALUES (, , , , )",
+        "INSERT INTO activity_logs (username, page, action, error_message, ip_address) VALUES ($1, $2, $3, $4, $5)",
         username, "/dashboard", f"Data Cleanup - {data.trainNo}", "", ip
     )
     
@@ -904,24 +903,24 @@ async def reset_session(
         
     now = utc_now()
     session_id = f"{data.trainNo}-{int(now.timestamp())}"
-    await db.pg_pool.execute("INSERT INTO sessions (train_no, session_name, status, created_at) VALUES (, , 'active', )", data.trainNo, session_id, now)
+    await db.pg_pool.execute("INSERT INTO sessions (train_no, session_name, status, created_at) VALUES ($1, $2, 'active', $3)", data.trainNo, session_id, now)
 
-    gateways = await db.pg_pool.fetch("SELECT gateway_id AS \"gatewayId\" FROM gateways WHERE train_id = ", data.trainNo)
+    gateways = await db.pg_pool.fetch("SELECT gateway_id AS \"gatewayId\" FROM gateways WHERE train_id = $1", data.trainNo)
     queued_commands = []
     for gateway in gateways:
         gateway_id = gateway.get("gatewayId")
         if not gateway_id:
             continue
         command_id = f"cmd-{uuid.uuid4()}"
-        await db.pg_pool.execute("UPDATE gateway_commands SET status = 'superseded', completed_at = , result = ::jsonb WHERE gateway_id =  AND type = 'reset' AND status IN ('pending', 'delivered')", now, json.dumps({"status": "superseded", "details": {"supersededBy": command_id}}), gateway_id)
-        await db.pg_pool.execute("INSERT INTO gateway_commands (command_id, gateway_id, type, status, delivery_count, created_at) VALUES (, , 'reset', 'pending', 0, )", command_id, gateway_id, now)
+        await db.pg_pool.execute("UPDATE gateway_commands SET status = 'superseded', completed_at = $1, result = $2::jsonb WHERE gateway_id = $3 AND type = 'reset' AND status IN ('pending', 'delivered')", now, json.dumps({"status": "superseded", "details": {"supersededBy": command_id}}), gateway_id)
+        await db.pg_pool.execute("INSERT INTO gateway_commands (command_id, gateway_id, type, status, delivery_count, created_at) VALUES ($1, $2, 'reset', 'pending', 0, $3)", command_id, gateway_id, now)
         queued_commands.append({"gatewayId": gateway_id, "commandId": command_id})
 
     # Log activity
     username = operator_username(request) or "admin"
     ip = client_ip(request) or "unknown"
     await db.pg_pool.execute(
-        "INSERT INTO activity_logs (username, page, action, error_message, ip_address) VALUES (, , , , )",
+        "INSERT INTO activity_logs (username, page, action, error_message, ip_address) VALUES ($1, $2, $3, $4, $5)",
         username, "/dashboard", f"Reset Session - {data.trainNo}", "", ip
     )
 
