@@ -677,20 +677,22 @@ window.focusAlertOnMap = function(lat, lon, gatewayId) {
   if (lat == null || lon == null) return;
   window.scrollTo({ top: 0, behavior: 'smooth' });
   const showAllBtn = document.getElementById('showAllMapsBtn');
-  if (gatewayId && maps[gatewayId]) {
+  const slotIndex = dashboardGatewayIds.indexOf(gatewayId);
+  const map = slotIndex >= 0 ? maps[slotIndex] : null;
+
+  if (gatewayId && map) {
     document.querySelectorAll('.map-card').forEach(card => {
       if (card.dataset.mapGateway === gatewayId) card.classList.remove('hidden');
       else card.classList.add('hidden');
     });
     if (showAllBtn) showAllBtn.classList.remove('hidden');
-    maps[gatewayId].flyTo([lat, lon], 17, { duration: 1.5 });
+    map.flyTo([lat, lon], 17, { duration: 1.5 });
   } else {
     document.querySelectorAll('.map-card').forEach(card => card.classList.remove('hidden'));
     if (showAllBtn) showAllBtn.classList.add('hidden');
-    Object.keys(maps).forEach(gwId => {
-      const map = maps[gwId];
-      if (map) {
-        map.flyTo([lat, lon], 17, { duration: 1.5 });
+    Object.values(maps).forEach(m => {
+      if (m) {
+        m.flyTo([lat, lon], 17, { duration: 1.5 });
       }
     });
   }
@@ -2658,22 +2660,24 @@ function focusLocationOnMap(lat, lon, gatewayId) {
   selectTab('alerts');
   setTimeout(() => {
     const showAllBtn = document.getElementById('showAllMapsBtn');
-    if (gatewayId && maps[gatewayId]) {
+    const slotIndex = dashboardGatewayIds.indexOf(gatewayId);
+    const map = slotIndex >= 0 ? maps[slotIndex] : null;
+
+    if (gatewayId && map) {
       document.querySelectorAll('.map-card').forEach(card => {
         if (card.dataset.mapGateway === gatewayId) card.classList.remove('hidden');
         else card.classList.add('hidden');
       });
       if (showAllBtn) showAllBtn.classList.remove('hidden');
-      maps[gatewayId].setView([lat, lon], 14);
-      maps[gatewayId].invalidateSize();
+      map.setView([lat, lon], 14);
+      map.invalidateSize();
     } else {
       document.querySelectorAll('.map-card').forEach(card => card.classList.remove('hidden'));
       if (showAllBtn) showAllBtn.classList.add('hidden');
-      Object.keys(maps).forEach(gwId => {
-        const map = maps[gwId];
-        if (map) {
-          map.setView([lat, lon], 14);
-          map.invalidateSize();
+      Object.values(maps).forEach(m => {
+        if (m) {
+          m.setView([lat, lon], 14);
+          m.invalidateSize();
         }
       });
     }
