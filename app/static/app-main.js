@@ -686,8 +686,8 @@ function renderAlertSummary(alerts) {
 window.focusAlertOnMap = function(lat, lon, gatewayId) {
   if (lat == null || lon == null) return;
   window.lastActiveTabBeforeMap = document.querySelector('.tab.active')?.dataset?.tab || 'alerts';
-  window.scrollTo({ top: 0, behavior: 'smooth' });
   selectTab('alerts');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
   setTimeout(() => {
     const showAllBtn = document.getElementById('showAllMapsBtn');
     document.body.classList.add('fullscreen-map-mode');
@@ -702,7 +702,188 @@ window.focusAlertOnMap = function(lat, lon, gatewayId) {
     }
     setTimeout(() => { Object.values(maps).forEach(m => { if(m) { m.invalidateSize(); m.flyTo([lat, lon], 17, {duration: 1.5}); } }); }, 200);
   }, 150);
+};
+
+function renderAlerts(alerts) {
+  setHtml('alertsTable', alerts.length ? alerts.map((alert) => `
+    <tr>
+      <td>${formatDate(alert.createdAt)}</td>
+      <td>${alert.gatewayId || '-'}</td>
+      <td>${alert.zone || 'NCR'}</td>
+      <td>${alert.division || 'Prayagraj'}</td>
+      <td>${alert.section || 'ABC-XYZ'}</td>
+      <td>${alert.peakValueG ?? '-'}</td>
+      <td><span class="badge ${alert.alert}">${alert.alert || '-'}</span></td>
+      <td>
+        ${alert.latitude && alert.longitude ? 
+          `<button class="secondary" style="padding: 4px 8px; font-size: 12px;" onclick="focusAlertOnMap(${alert.latitude}, ${alert.longitude}, '${alert.gatewayId}')"><i class="bi bi-geo-alt-fill"></i> View on Map</button>` 
+          : '-'}
+      </td>
+    </tr>
+  `).join('') : '<tr><td colspan="8">No alerts found.</td></tr>');
 }
+
+function pointInRouteBounds(point, routePoints, padding = 0.035) {
+  if (!routePoints.length) return true;
+  const lats = routePoints.map((item) => Number(item.lat));
+  const lons = routePoints.map((item) => Number(item.lon));
+  const minLat = Math.min(...lats) - padding;
+  const maxLat = Math.max(...lats) + padding;
+  const minLon = Math.min(...lons) - padding;
+  const maxLon = Math.max(...lons) + padding;
+  const lat = Number(point.lat);
+  const lon = Number(point.lon);
+  return lat >= minLat && lat <= maxLat && lon >= minLon && lon <= maxLon;
+}
+
+function routeBearing(previous, current) {
+  const lat1 = Number(previous.lat) * Math.PI / 180;
+  const lat2 = Number(current.lat) * Math.PI / 180;
+  const deltaLon = (Number(current.lon) - Number(previous.lon)) * Math.PI / 180;
+  const y = Math.sin(deltaLon) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLon);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+function addDirectionArrow(layer, previous, current, severity) {
+  const midLat = (Number(previous.lat) + Number(current.lat)) / 2;
+  const midLon = (Number(previous.lon) + Number(current.lon)) / 2;
+  const bearing = routeBearing(previous, current);
+  L.marker([midLat, midLon], {
+    interactive: false,
+    icon: L.divIcon({
+      className: 'direction-arrow',
+      html: `<span style="transform: rotate(${bearing}deg); color: ${alertColor(severity)}">&#9650;</span>`,
+      iconSize: [18, 18],
+      iconAnchor: [9, 9],
+    }),
+  }).addTo(layer);
+}
+
+function trainIconHtml(bearing) {
+  const rotation = Number.isFinite(Number(bearing)) ? Number(bearing) : 0;
+  return `
+    <div style="background: #ffffff; border: 2.5px solid #1d70b8; border-radius: 50%; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; box-shadow: 0 3px 8px rgba(0,0,0,0.35); transform: rotate(${rotation}deg); transition: transform 0.2s ease;">
+      <i class="bi bi-train-front-fill" style="font-size: 20px; color: #1d70b8; display: block; line-height: 1;"></i>
+    </div>
+  `;
+}
+
+function drawColoredRoute(layer, points) {
+  if (!layer || points.length < 2) return;
+
+  const latlngs = [];
+  for (let i = 1; i < points.length; i += 1) {
+    const previous = points[i - 1];
+    const current = points[i];
+    const severity = normalizeAlert(current.color);
+    const p1 = [Number(previous.lat), Number(previous.lon)];
+    const p2 = [Number(current.lat), Number(current.lon)];
+    latlngs.push(p1);
+    if (i === points.length - 1) latlngs.push(p2);
+
+    L.polyline([p1, p2], {
+      color: alertColor(severity),
+      weight: 6,
+      opacity: 0.9,
+      lineCap: 'round',
+      lineJoin: 'round',
+      smoothFactor: 1.2,
+      className: 'map-route-polyline',
+    }).addTo(layer);
+  }
+
+  if (window.L.polylineDecorator && latlngs.length > 1) {
+    L.polylineDecorator(L.polyline(latlngs), {
+      patterns: [
+        {
+          offset: '5%',
+          repeat: '100px',
+          symbol: L.Symbol.arrowHead({
+            pixelSize: 14,
+            polygon: false,
+            pathOptions: { stroke: true, weight: 3, color: '#1f2937', opacity: 0.8 }
+          })
+        }
+      ]
+    }).addTo(layer);
+  }
+}
+
+
+function renderMaps(alerts, gateways, rmsPoints = [], mapAlerts = []) {
+  const selectedGateway = selectedGatewayValue();
+  const visibleIds = visibleGatewayIds();
+  const validRmsPoints = rmsPoints
+    .filter((point) => Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon)));
+
+  const slots = [
+    { target: 'mapGw1', defaultId: 'GW_UABAMS_BOGIE_01', stateId: 'gw1MapState' },
+    { target: 'mapGw2', defaultId: 'GW_UABAMS_BOGIE_02', stateId: 'gw2MapState' },
+  ];
+
+  slots.forEach((slot, index) => {
+    const card = document.querySelector(`[data-map-gateway="${slot.defaultId}"]`);
+    const gatewayId = dashboardGatewayIds[index];
+
+    if (!gatewayId) {
+      if (card) card.classList.add('hidden');
+      return;
+    }
+
+    if (card) {
+      card.classList.toggle('hidden', !visibleIds.includes(gatewayId));
+      const titleSpan = card.querySelector('.gateway-title span:first-child');
+      if (titleSpan) {
+        titleSpan.textContent = `${gatewayLabel(gatewayId)} Route Map`;
+      }
+    }
+
+    const map = maps[index];
+    const layer = layers[index];
+    if (!map || !layer || !window.L) return;
+    layer.clearLayers();
+    if (!visibleIds.includes(gatewayId)) return;
+
+    const routePoints = validRmsPoints.filter((point) => point.gateway_id === gatewayId);
+    const rawAlertPoints = (mapAlerts.length ? mapAlerts : alerts.map(dashboardAlertToMapPoint))
+      .filter((point) => point.gateway_id === gatewayId)
+      .filter((point) => ['RED', 'YELLOW', 'GREEN'].includes(normalizeAlert(point.color)))
+      .filter((point) => Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon)))
+      .slice()
+      .reverse();
+    const alertPoints = rawAlertPoints.filter((point) => Number(point.lat) !== 0 && Number(point.lon) !== 0);
+
+    const gw = gateways.find((item) => item.gatewayId === gatewayId);
+    setText(slot.stateId, gw?.online ? 'Online' : 'Offline');
+    setClass(slot.stateId, `badge ${gw?.online ? 'online' : 'offline'}`);
+
+    if (!routePoints.length && !alertPoints.length) {
+      map.setView([22.9734, 78.6569], 5);
+      return;
+    }
+
+    drawColoredRoute(layer, routePoints);
+
+
+    // Draw Heatmap (Deferred to avoid Canvas 0 width error when unhiding map)
+    if (window.L.heatLayer && alertPoints.length > 0) {
+      setTimeout(() => {
+        if (!visibleIds.includes(gatewayId)) return;
+        const heatPoints = alertPoints.map(p => {
+          const snapped = snapToRoute(p.lat, p.lon, routePoints);
+          const severity = normalizeAlert(p.color);
+          const intensity = severity === 'RED' ? 1.0 : severity === 'YELLOW' ? 0.5 : 0.2;
+          return [snapped[0], snapped[1], intensity];
+        });
+        L.heatLayer(heatPoints, {
+          radius: 35,
+          blur: 25,
+          maxZoom: 14,
+          gradient: {0.2: 'lime', 0.5: 'yellow', 1.0: 'red'}
+        }).addTo(layer);
+      }, 150);
+    }
     
     alertPoints.forEach((point, index) => {
       const severity = normalizeAlert(point.color);
@@ -1782,7 +1963,7 @@ function renderRepeatedAlarmsTable(rows) {
   
   tbody.innerHTML = filtered.length ? filtered.map(row => {
     const locLink = row.location && row.location !== '-'
-      ? `<a href="javascript:void(0)" onclick="focusLocationOnMap(${row.location}, '${row.machineName || ''}')" style="color: #0d6efd; text-decoration: underline;">${escapeHtml(row.location)}</a>`
+      ? `<a href="javascript:void(0)" onclick="focusLocationOnMap(${row.location})" style="color: #0d6efd; text-decoration: underline;">${escapeHtml(row.location)}</a>`
       : '-';
     return `
       <tr>
@@ -1880,7 +2061,7 @@ function renderTable(rows) {
   if (!tbody) return;
   tbody.innerHTML = rows.length ? rows.map(row => {
     const locLink = row.location && row.location !== '-'
-      ? `<a href="javascript:void(0)" onclick="focusLocationOnMap(${row.location}, '${row.machineName || ''}')" style="color: #0d6efd; text-decoration: underline;">${escapeHtml(row.location)}</a>`
+      ? `<a href="javascript:void(0)" onclick="focusLocationOnMap(${row.location})" style="color: #0d6efd; text-decoration: underline;">${escapeHtml(row.location)}</a>`
       : '-';
     return `
       <tr>
@@ -2823,11 +3004,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (state.dashboard) renderDashboard(state.dashboard);
   });
 });
-
-
-
-
-
 
 
 
