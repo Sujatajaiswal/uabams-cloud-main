@@ -2972,19 +2972,17 @@ document.addEventListener('DOMContentLoaded', () => {
   initializeMaps();
   loadTrainList();
 
-  const showAllBtn = document.getElementById('showAllMapsBtn');
-  if (showAllBtn) {
-    showAllBtn.addEventListener('click', () => {
-      document.body.classList.remove('fullscreen-map-mode');
-      document.querySelectorAll('.map-card').forEach(card => card.classList.remove('hidden'));
-      showAllBtn.classList.add('hidden');
-      setTimeout(() => {
-        Object.values(maps).forEach((map) => {
-          if (map) map.invalidateSize();
-        });
-      }, 200);
-    });
-  }
+  window.closeFullscreenMap = function() {
+    document.body.classList.remove('fullscreen-map-mode');
+    document.querySelectorAll('.map-card').forEach(card => card.classList.remove('hidden'));
+    const showAllBtn = document.getElementById('showAllMapsBtn');
+    if (showAllBtn) showAllBtn.classList.add('hidden');
+    setTimeout(() => {
+      Object.values(maps).forEach((map) => {
+        if (map) map.invalidateSize();
+      });
+    }, 200);
+  };
 
   // Poll gateway status periodically
   setInterval(checkGatewayStatus, 30000);
