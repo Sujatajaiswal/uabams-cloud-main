@@ -497,7 +497,7 @@ function renderDashboard(data) {
   const activeTabId = activeTabBtn ? activeTabBtn.dataset.tab : '';
   
   // Redirect to overview if they are on a tab they shouldn't see
-  if (activeTabId === 'users' && !perms.can_manage_users) selectTab('overview');
+  if (activeTabId === 'users' && !perms.can_manage_users) selectTab('alerts');
   if (activeTabId === 'calibration' && !perms.can_configure_thresholds) selectTab('overview');
   if (activeTabId === 'alerts' && !perms.can_view_alerts) selectTab('overview');
   if (['calibration', 'archives', 'reset', 'logs'].includes(activeTabId) && userRole !== 'admin') {
@@ -2977,7 +2977,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.map-card').forEach(card => card.classList.remove('hidden'));
     const showAllBtn = document.getElementById('showAllMapsBtn');
     if (showAllBtn) showAllBtn.classList.add('hidden');
-    selectTab('overview');
+    selectTab('alerts');
     window.scrollTo({ top: 0 });
     setTimeout(() => {
       Object.values(maps).forEach((map) => {
@@ -3015,3 +3015,4 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (state.dashboard) renderDashboard(state.dashboard);
   });
 });
+
