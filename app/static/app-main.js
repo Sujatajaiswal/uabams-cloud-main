@@ -1,3 +1,13 @@
+window.closeFullscreenMap = function() {
+  console.log('Close map clicked');
+  document.body.classList.remove('fullscreen-map-mode');
+  document.querySelectorAll('.map-card').forEach(card => card.classList.remove('hidden'));
+  const btn = document.getElementById('showAllMapsBtn');
+  if (btn) btn.style.display = 'none';
+  selectTab('alerts');
+  window.scrollTo({ top: 0 });
+  setTimeout(() => { Object.values(maps).forEach(m => m?.invalidateSize()); }, 200);
+};
 const state = { dashboard: null, rmsPoints: [], mapAlerts: [], selectedGateway: '', selectedDateFilter: null };
 const defaultGatewayIds = ['GW_UABAMS_BOGIE_01', 'GW_UABAMS_BOGIE_02'];
 const gatewayIds = defaultGatewayIds;
@@ -687,7 +697,7 @@ window.focusAlertOnMap = function(lat, lon, gatewayId) {
       else card.classList.add('hidden');
     });
     if (showAllBtn) {
-      showAllBtn.classList.remove('hidden');
+      showAllBtn.classList.remove('hidden'); showAllBtn.style.display = 'block';
       showAllBtn.innerHTML = '<i class="bi bi-x-circle"></i> Close Map';
     }
     setTimeout(() => { map.invalidateSize(); map.flyTo([lat, lon], 17, { duration: 1.5 }); }, 200);
@@ -2675,7 +2685,7 @@ function focusLocationOnMap(lat, lon, gatewayId) {
         else card.classList.add('hidden');
       });
       if (showAllBtn) {
-        showAllBtn.classList.remove('hidden');
+        showAllBtn.classList.remove('hidden'); showAllBtn.style.display = 'block';
         showAllBtn.innerHTML = '<i class="bi bi-x-circle"></i> Close Map';
       }
       setTimeout(() => { map.invalidateSize(); map.setView([lat, lon], 14); }, 200);
@@ -3015,4 +3025,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (state.dashboard) renderDashboard(state.dashboard);
   });
 });
+
+
+
 
