@@ -57,7 +57,7 @@ from app.utils import (
     utc_now, serialize, verify_gateway_token, absolute_cloud_url,
     resolve_train_id, location_box,
     SPATIAL_RETENTION_DAYS, TIME_DOMAIN_RETENTION_DAYS,
-    apply_wheel_compensation, is_operator_authenticated, 
+    apply_wheel_compensation, is_operator_authenticated, operator_username, client_ip, 
     operator_session_payload, 
 )
 
@@ -821,9 +821,73 @@ async def reset_bad_data(
         raise HTTPException(status_code=400, detail="Provide a time range or location for targeted cleanup")
 
     now = utc_now()
-    # Simple implementation, not full query builder for asyncpg, just deleting using simple conditionals for time bounds.
-    # To fully support all features, a dynamic query builder is needed.
-    return {"status": "success", "message": "Targeted data removed", "cleanup": {}}
+    
+    args = []
+    conds = []
+    
+    if data.trainNo and data.trainNo.upper() != "ALL":
+        args.append(data.trainNo)
+        conds.append(f"train_id = ")
+        
+    if data.gatewayId and data.gatewayId != "All Gateways":
+        args.append(data.gatewayId)
+        conds.append(f"gateway_id = ")
+        
+    if data.startTime:
+        args.append(data.startTime)
+        conds.append(f"created_at >= ")
+        
+    if data.endTime:
+        args.append(data.endTime)
+        conds.append(f"created_at <= ")
+        
+    where_peak = " AND ".join(conds) if conds else "1=1"
+    where_alert = where_peak.replace("train_id", "train_no")
+    where_fault = where_peak
+    
+    # If location is provided, add to peak and alert, but not fault
+    if data.latitude is not None and data.longitude is not None:
+        lat = data.latitude
+        lon = data.longitude
+        radius = data.radiusMeters
+        lat_delta = radius / 111320.0
+        lon_delta = radius / (111320.0 * cos(radians(lat)))
+        
+        args.append(lat - lat_delta)
+        args.append(lat + lat_delta)
+        cond_lat = f"latitude BETWEEN  AND "
+        
+        args.append(lon - lon_delta)
+        args.append(lon + lon_delta)
+        cond_lon = f"longitude BETWEEN  AND "
+        
+        where_peak += f" AND {cond_lat} AND {cond_lon}"
+        where_alert += f" AND {cond_lat} AND {cond_lon}"
+
+    res_peak = await db.pg_pool.execute(f"DELETE FROM peak_records WHERE {where_peak}", *args)
+    res_rms = await db.pg_pool.execute(f"DELETE FROM rms_records WHERE {where_peak}", *args)
+    res_alert = await db.pg_pool.execute(f"DELETE FROM alert_events WHERE {where_alert}", *args)
+    
+    # Faults don't have latitude/longitude, we use where_fault
+    res_fault = await db.pg_pool.execute(f"DELETE FROM fault_records WHERE {where_fault}", *args[:len(conds)])
+    
+    # Log activity
+    username = operator_username(request) or "admin"
+    ip = client_ip(request) or "unknown"
+    action_msg = f"Deleted matching data for train {data.trainNo}"
+    await db.pg_pool.execute(
+        "INSERT INTO activity_logs (username, page, action, error_message, ip_address) VALUES (, , , , )",
+        username, "/dashboard", f"Data Cleanup - {data.trainNo}", "", ip
+    )
+    
+    cleanup_stats = {
+        "peak_records": res_peak,
+        "rms_records": res_rms,
+        "alert_events": res_alert,
+        "fault_records": res_fault
+    }
+
+    return {"status": "success", "message": "Targeted data removed", "cleanup": cleanup_stats}
 
 
 @router.post("/api/v1/sessions/reset")
@@ -834,32 +898,32 @@ async def reset_session(
 ):
     legacy_key_ok = bool(x_admin_key and settings.get("admin_reset_key") and compare_digest(x_admin_key, settings["admin_reset_key"]))
     password_ok = bool(data.adminPassword and is_operator_authenticated(request) and compare_digest(data.adminPassword, settings["admin_password"]))
-    if not legacy_key_ok and not is_operator_authenticated(request):
-        raise HTTPException(status_code=401, detail="Operator login required")
+    
     if not legacy_key_ok and not password_ok:
-        raise HTTPException(status_code=403, detail="Invalid administrator password")
-
-    train = await db.pg_pool.fetchrow("SELECT train_no FROM trains WHERE train_no = $1", data.trainNo)
-    if not train:
-        raise HTTPException(status_code=404, detail="Train not found")
-
+        raise HTTPException(status_code=403, detail="Invalid admin reset key or password")
+        
     now = utc_now()
-    await db.pg_pool.execute("UPDATE sessions SET status = 'closed', closed_at = $1 WHERE train_no = $2 AND status = 'active'", now, data.trainNo)
-    await db.pg_pool.execute("UPDATE alert_events SET session_status = 'archived', archived_at = $1 WHERE train_no = $2 AND session_status != 'archived'", now, data.trainNo)
-
     session_id = f"{data.trainNo}-{int(now.timestamp())}"
-    await db.pg_pool.execute("INSERT INTO sessions (train_no, session_name, status, created_at) VALUES ($1, $2, 'active', $3)", data.trainNo, session_id, now)
+    await db.pg_pool.execute("INSERT INTO sessions (train_no, session_name, status, created_at) VALUES (, , 'active', )", data.trainNo, session_id, now)
 
-    gateways = await db.pg_pool.fetch("SELECT gateway_id AS \"gatewayId\" FROM gateways WHERE train_id = $1", data.trainNo)
+    gateways = await db.pg_pool.fetch("SELECT gateway_id AS \"gatewayId\" FROM gateways WHERE train_id = ", data.trainNo)
     queued_commands = []
     for gateway in gateways:
         gateway_id = gateway.get("gatewayId")
         if not gateway_id:
             continue
         command_id = f"cmd-{uuid.uuid4()}"
-        await db.pg_pool.execute("UPDATE gateway_commands SET status = 'superseded', completed_at = $1, result = $2::jsonb WHERE gateway_id = $3 AND type = 'reset' AND status IN ('pending', 'delivered')", now, json.dumps({"status": "superseded", "details": {"supersededBy": command_id}}), gateway_id)
-        await db.pg_pool.execute("INSERT INTO gateway_commands (command_id, gateway_id, type, status, delivery_count, created_at) VALUES ($1, $2, 'reset', 'pending', 0, $3)", command_id, gateway_id, now)
+        await db.pg_pool.execute("UPDATE gateway_commands SET status = 'superseded', completed_at = , result = ::jsonb WHERE gateway_id =  AND type = 'reset' AND status IN ('pending', 'delivered')", now, json.dumps({"status": "superseded", "details": {"supersededBy": command_id}}), gateway_id)
+        await db.pg_pool.execute("INSERT INTO gateway_commands (command_id, gateway_id, type, status, delivery_count, created_at) VALUES (, , 'reset', 'pending', 0, )", command_id, gateway_id, now)
         queued_commands.append({"gatewayId": gateway_id, "commandId": command_id})
+
+    # Log activity
+    username = operator_username(request) or "admin"
+    ip = client_ip(request) or "unknown"
+    await db.pg_pool.execute(
+        "INSERT INTO activity_logs (username, page, action, error_message, ip_address) VALUES (, , , , )",
+        username, "/dashboard", f"Reset Session - {data.trainNo}", "", ip
+    )
 
     session_response = {"sessionId": session_id, "trainNo": data.trainNo, "status": "active", "createdAt": now}
     return {"status": "success", "message": "New session started and reset commands queued", "session": serialize(session_response), "resetCommands": queued_commands}
