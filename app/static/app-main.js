@@ -681,13 +681,18 @@ window.focusAlertOnMap = function(lat, lon, gatewayId) {
   const map = slotIndex >= 0 ? maps[slotIndex] : null;
 
   if (gatewayId && map) {
+    document.body.classList.add('fullscreen-map-mode');
     document.querySelectorAll('.map-card').forEach(card => {
-      if (card.dataset.mapGateway === gatewayId) card.classList.remove('hidden');
+      if (card.getAttribute('data-map-gateway') === gatewayId) card.classList.remove('hidden');
       else card.classList.add('hidden');
     });
-    if (showAllBtn) showAllBtn.classList.remove('hidden');
-    map.flyTo([lat, lon], 17, { duration: 1.5 });
+    if (showAllBtn) {
+      showAllBtn.classList.remove('hidden');
+      showAllBtn.innerHTML = '<i class="bi bi-x-circle"></i> Close Map';
+    }
+    setTimeout(() => { map.invalidateSize(); map.flyTo([lat, lon], 17, { duration: 1.5 }); }, 200);
   } else {
+    document.body.classList.remove('fullscreen-map-mode');
     document.querySelectorAll('.map-card').forEach(card => card.classList.remove('hidden'));
     if (showAllBtn) showAllBtn.classList.add('hidden');
     Object.values(maps).forEach(m => {
@@ -2664,14 +2669,18 @@ function focusLocationOnMap(lat, lon, gatewayId) {
     const map = slotIndex >= 0 ? maps[slotIndex] : null;
 
     if (gatewayId && map) {
+      document.body.classList.add('fullscreen-map-mode');
       document.querySelectorAll('.map-card').forEach(card => {
-        if (card.dataset.mapGateway === gatewayId) card.classList.remove('hidden');
+        if (card.getAttribute('data-map-gateway') === gatewayId) card.classList.remove('hidden');
         else card.classList.add('hidden');
       });
-      if (showAllBtn) showAllBtn.classList.remove('hidden');
-      map.setView([lat, lon], 14);
-      map.invalidateSize();
+      if (showAllBtn) {
+        showAllBtn.classList.remove('hidden');
+        showAllBtn.innerHTML = '<i class="bi bi-x-circle"></i> Close Map';
+      }
+      setTimeout(() => { map.invalidateSize(); map.setView([lat, lon], 14); }, 200);
     } else {
+      document.body.classList.remove('fullscreen-map-mode');
       document.querySelectorAll('.map-card').forEach(card => card.classList.remove('hidden'));
       if (showAllBtn) showAllBtn.classList.add('hidden');
       Object.values(maps).forEach(m => {
@@ -2966,11 +2975,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const showAllBtn = document.getElementById('showAllMapsBtn');
   if (showAllBtn) {
     showAllBtn.addEventListener('click', () => {
+      document.body.classList.remove('fullscreen-map-mode');
       document.querySelectorAll('.map-card').forEach(card => card.classList.remove('hidden'));
       showAllBtn.classList.add('hidden');
-      Object.values(maps).forEach((map) => {
-        if (map) map.invalidateSize();
-      });
+      setTimeout(() => {
+        Object.values(maps).forEach((map) => {
+          if (map) map.invalidateSize();
+        });
+      }, 200);
     });
   }
 
