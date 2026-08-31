@@ -2977,7 +2977,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.map-card').forEach(card => card.classList.remove('hidden'));
     const showAllBtn = document.getElementById('showAllMapsBtn');
     if (showAllBtn) showAllBtn.classList.add('hidden');
-    selectTab('dashboard');
+    selectTab('overview');
     window.scrollTo({ top: 0 });
     setTimeout(() => {
       Object.values(maps).forEach((map) => {
