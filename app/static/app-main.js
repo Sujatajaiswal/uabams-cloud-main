@@ -2000,8 +2000,13 @@ function openAlarmLogFor(rid) {
 }
 
 async function loadAlarmLogReport() {
+  const rid = $('ridInput').value.trim();
+  if (!rid) {
+    alert("Please enter a Train ID (RID)");
+    return;
+  }
   const request = {
-    rid: $('ridInput').value.trim(),
+    rid: rid,
     fromDate: $('fromDate').value,
     toDate: $('toDate').value,
     alarmType: $('alarmTypeFilter').value,
@@ -2124,8 +2129,10 @@ async function exportRepeatedAlarmPdf() {
 }
 
 async function exportCsv() {
+  const rid = $('ridInput').value.trim();
+  if (!rid) { alert('Please enter a Train ID (RID)'); return; }
   const payload = {
-    rid: $('ridInput').value.trim(),
+    rid: rid,
     fromDate: $('fromDate').value,
     toDate: $('toDate').value,
     alarmType: $('alarmTypeFilter').value,
@@ -2144,8 +2151,10 @@ async function exportCsv() {
 }
 
 async function exportExcel() {
+  const rid = $('ridInput').value.trim();
+  if (!rid) { alert('Please enter a Train ID (RID)'); return; }
   const payload = {
-    rid: $('ridInput').value.trim(),
+    rid: rid,
     fromDate: $('fromDate').value,
     toDate: $('toDate').value,
     alarmType: $('alarmTypeFilter').value,
@@ -2164,8 +2173,10 @@ async function exportExcel() {
 }
 
 async function exportPdf() {
+  const rid = $('ridInput').value.trim();
+  if (!rid) { alert('Please enter a Train ID (RID)'); return; }
   const payload = {
-    rid: $('ridInput').value.trim(),
+    rid: rid,
     fromDate: $('fromDate').value,
     toDate: $('toDate').value,
     alarmType: $('alarmTypeFilter').value,
@@ -3004,6 +3015,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (state.dashboard) renderDashboard(state.dashboard);
   });
 });
+
+
+
 
 
 
