@@ -1496,8 +1496,6 @@ function selectTab(tabId) {
   }
   if (tabId === 'logs') loadLogs();
   if (tabId === 'users') loadUsersView();
-  if (tabId === 'repeated_alarm') loadRepeatedAlarmReport();
-  if (tabId === 'alarm_log_reports') loadAlarmLogReport();
   if (tabId === 'rolling_stock_graph') {
     const currentTrain = trainNoValue();
     const graphRidEl = document.getElementById('graphRid');
@@ -3026,6 +3024,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (state.dashboard) renderDashboard(state.dashboard);
   });
 });
+
 
 
 

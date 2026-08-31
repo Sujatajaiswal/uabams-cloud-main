@@ -866,6 +866,7 @@ async def reset_session(
 
 
 class RepeatedAlarmRequest(BaseModel):
+    rid: str | None = None
     fromDate: str
     toDate: str
 
@@ -1179,4 +1180,5 @@ async def load_graph_report(data: GraphDataRequest, request: Request):
         "rollingStockType": rolling_stock_type,
         "points": points
     }
+
 
