@@ -55,7 +55,7 @@ async def list_activity_logs(request: Request, username: str | None = None, page
     
     # DB Rewrite
     query = "SELECT id, username, page, action, error_message AS \"errorMessage\", ip_address AS \"ipAddress\", latitude, longitude, created_at AS \"createdAt\" FROM activity_logs"
-    conditions = []
+    conditions = ["action != 'javascript_error'"]
     params = []
     param_idx = 1
     
@@ -77,3 +77,4 @@ async def list_activity_logs(request: Request, username: str | None = None, page
     rows = await db.pg_pool.fetch(query, *params)
     logs = [dict(r) for r in rows]
     return {"logs": serialize(logs)}
+

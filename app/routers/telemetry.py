@@ -905,6 +905,13 @@ async def reset_session(
     session_id = f"{data.trainNo}-{int(now.timestamp())}"
     await db.pg_pool.execute("INSERT INTO sessions (train_no, session_name, status, created_at) VALUES ($1, $2, 'active', $3)", data.trainNo, session_id, now)
 
+    # Delete everything for this train!
+    if data.trainNo and data.trainNo.upper() != "ALL":
+        await db.pg_pool.execute("DELETE FROM peak_records WHERE train_id = $1", data.trainNo)
+        await db.pg_pool.execute("DELETE FROM rms_records WHERE train_id = $1", data.trainNo)
+        await db.pg_pool.execute("DELETE FROM fault_records WHERE train_id = $1", data.trainNo)
+        await db.pg_pool.execute("DELETE FROM alert_events WHERE train_no = $1", data.trainNo)
+
     gateways = await db.pg_pool.fetch("SELECT gateway_id AS \"gatewayId\" FROM gateways WHERE train_id = $1", data.trainNo)
     queued_commands = []
     for gateway in gateways:

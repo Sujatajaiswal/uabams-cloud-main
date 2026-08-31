@@ -6,7 +6,7 @@
   <title>UABAMS Dashboard</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="/static/styles.css?v=41?v=20260813-v3">
+  <link rel="stylesheet" href="/static/styles.css?v=42?v=20260813-v3">
 </head>
 <body><button id="showAllMapsBtn" class="secondary hidden" onclick="closeFullscreenMap()"><i class="bi bi-x-circle"></i> Close Map</button>
   <!-- Dummy inputs to capture aggressive browser autofill -->
@@ -268,7 +268,7 @@
         <label>End Time<input id="cleanupEnd" type="datetime-local" step="1"></label>
         <label>Latitude<input id="cleanupLat" type="number" step="0.000001" placeholder="Optional"></label>
         <label>Longitude<input id="cleanupLon" type="number" step="0.000001" placeholder="Optional"></label>
-        <label>Radius Meters<input id="cleanupRadius" type="number" step="1" value="100"></label>
+        <label>Radius Meters<input id="cleanupRadius" type="number" step="1" placeholder="Optional (default 100)"></label>
         <label class="wide-field">Reason<input id="cleanupReason" placeholder="Server issue / wrong test upload"></label>
         <button id="cleanupBtn" class="danger">Delete Matching Data</button>
       </div>
@@ -706,8 +706,9 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
-  <script src="/static/app-main.js?v=41"></script>
+  <script src="/static/app-main.js?v=42"></script>
 </body>
 </html>
+
 
 
