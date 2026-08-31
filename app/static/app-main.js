@@ -985,15 +985,10 @@ async function loadLogs() {
     const getLogSeverity = (log) => {
       const act = String(log.action || '').toLowerCase();
       const err = String(log.errorMessage || '').toLowerCase();
-      if (err && err !== '-' && err !== 'none' && err !== 'null') {
-        return 'CRITICAL';
-      }
-      if (act.includes('delete') || act.includes('remove') || act.includes('reset') || act.includes('failed') || act.includes('unauthorized')) {
-        return 'CRITICAL';
-      }
-      if (act.includes('login') || act.includes('logout') || act.includes('calibrate') || act.includes('export')) {
-        return 'WARNING';
-      }
+      const hasError = (err && err !== '-' && err !== 'none' && err !== 'null');
+      if (act.includes('delete') || act.includes('remove') || act.includes('reset') || act.includes('failed') || act.includes('unauthorized')) return 'CRITICAL';
+      if (act.includes('login') || act.includes('logout') || act.includes('calibrate') || act.includes('export')) return hasError ? 'WARNING' : 'WARNING';
+      if (hasError) return 'CRITICAL';
       return 'NORMAL';
     };
 
@@ -1961,8 +1956,7 @@ async function loadRepeatedAlarmReport() {
 function renderRepeatedAlarmsTable(rows) {
   const tbody = $('repeatedAlarmsTableBody');
   if (!tbody) return;
-  const searchVal = $('repSearchRid').value.toLowerCase().trim();
-  const filtered = rows.filter(r => !searchVal || r.rid.toLowerCase().includes(searchVal));
+  const filtered = rows;
   
   tbody.innerHTML = filtered.length ? filtered.map(row => {
     const locLink = row.location && row.location !== '-'
@@ -2269,7 +2263,7 @@ function initializeReports() {
   $('repLoadReportBtn')?.addEventListener("click", loadRepeatedAlarmReport);
   $('loadReportBtn')?.addEventListener("click", loadAlarmLogReport);
   
-  $('repSearchRid')?.addEventListener("input", () => renderRepeatedAlarmsTable(repeatedAlarmsData));
+  
   
   $('repExportBtn')?.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -3024,6 +3018,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (state.dashboard) renderDashboard(state.dashboard);
   });
 });
+
+
+
 
 
 
