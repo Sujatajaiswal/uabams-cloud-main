@@ -1148,25 +1148,6 @@ async def load_graph_report(data: GraphDataRequest, request: Request):
                 "axes": axes_data
             })
             
-    if not points:
-        import random
-        from datetime import timedelta
-        base_time = utc_now() - timedelta(hours=1)
-        for i in range(20):
-            sim_dt = base_time + timedelta(minutes=i*3)
-            points.append({
-                "timestamp": sim_dt.strftime("%d-%m-%Y %H:%M:%S"),
-                "speed": round(random.uniform(40, 80), 1),
-                "positionKm": 100 + i * 2,
-                "latitude": 28.6 + i * 0.01,
-                "longitude": 77.2 + i * 0.01,
-                "axes": {
-                    "X": round(random.uniform(0.5, 2.5) if data.metric == "Peak" else random.uniform(0.1, 1.0), 2),
-                    "Y": round(random.uniform(0.5, 3.5) if data.metric == "Peak" else random.uniform(0.1, 1.5), 2),
-                    "Z": round(random.uniform(1.0, 5.0) if data.metric == "Peak" else random.uniform(0.2, 2.0), 2),
-                }
-            })
-            
     rolling_stock_type = "C"
     train_type = "Goods"
     if points and data.rid:
@@ -1180,5 +1161,6 @@ async def load_graph_report(data: GraphDataRequest, request: Request):
         "rollingStockType": rolling_stock_type,
         "points": points
     }
+
 
 

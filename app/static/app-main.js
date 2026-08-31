@@ -1482,6 +1482,7 @@ async function resetSession() {
 }
 
 function selectTab(tabId) {
+  localStorage.setItem('activeTab', tabId);
   document.querySelectorAll('.tab').forEach((button) => button.classList.toggle('active', button.dataset.tab === tabId));
   document.querySelectorAll('.panel').forEach((panel) => panel.classList.toggle('active', panel.id === tabId));
   if (tabId === 'alerts') {
@@ -1999,7 +2000,7 @@ function openAlarmLogFor(rid) {
 async function loadAlarmLogReport() {
   const rid = $('ridInput').value.trim();
   if (!rid) {
-    alert("Please enter a Train ID (RID)");
+    alert("Please enter a Train No");
     return;
   }
   const request = {
@@ -2133,7 +2134,7 @@ async function exportRepeatedAlarmPdf() {
 
 async function exportCsv() {
   const rid = $('ridInput').value.trim();
-  if (!rid) { alert('Please enter a Train ID (RID)'); return; }
+  if (!rid) { alert('Please enter a Train No'); return; }
   const payload = {
     rid: rid,
     fromDate: $('fromDate').value,
@@ -2155,7 +2156,7 @@ async function exportCsv() {
 
 async function exportExcel() {
   const rid = $('ridInput').value.trim();
-  if (!rid) { alert('Please enter a Train ID (RID)'); return; }
+  if (!rid) { alert('Please enter a Train No'); return; }
   const payload = {
     rid: rid,
     fromDate: $('fromDate').value,
@@ -2177,7 +2178,7 @@ async function exportExcel() {
 
 async function exportPdf() {
   const rid = $('ridInput').value.trim();
-  if (!rid) { alert('Please enter a Train ID (RID)'); return; }
+  if (!rid) { alert('Please enter a Train No'); return; }
   const payload = {
     rid: rid,
     fromDate: $('fromDate').value,
@@ -2312,7 +2313,7 @@ window.focusLocationOnMap = focusLocationOnMap;
 async function loadGraphData() {
   let rid = $('graphRid').value.trim();
   if (!rid) {
-    alert("Please enter a Rolling Stock ID (RID)");
+    alert("Please enter a Train No");
     return;
   }
   // Extract real ID before " - " if present
@@ -2971,7 +2972,8 @@ async function populateDropdown(selectId, type, parentCode = null, defaultText) 
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  setupUIHandlers();
+  const savedTab = localStorage.getItem('activeTab') || 'overview';
+  selectTab(savedTab);
   initializeMaps();
   loadTrainList();
 
@@ -3018,6 +3020,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (state.dashboard) renderDashboard(state.dashboard);
   });
 });
+
+
 
 
 
