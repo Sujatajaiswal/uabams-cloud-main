@@ -2973,15 +2973,19 @@ document.addEventListener('DOMContentLoaded', () => {
   loadTrainList();
 
   window.closeFullscreenMap = function() {
-    document.body.classList.remove('fullscreen-map-mode');
-    document.querySelectorAll('.map-card').forEach(card => card.classList.remove('hidden'));
-    const showAllBtn = document.getElementById('showAllMapsBtn');
-    if (showAllBtn) showAllBtn.classList.add('hidden');
-    setTimeout(() => {
-      Object.values(maps).forEach((map) => {
-        if (map) map.invalidateSize();
-      });
-    }, 200);
+    try {
+      document.body.classList.remove('fullscreen-map-mode');
+      document.querySelectorAll('.map-card').forEach(card => card.classList.remove('hidden'));
+      const showAllBtn = document.getElementById('showAllMapsBtn');
+      if (showAllBtn) showAllBtn.classList.add('hidden');
+      setTimeout(() => {
+        Object.values(maps).forEach((map) => {
+          if (map) map.invalidateSize();
+        });
+      }, 200);
+    } catch(e) {
+      alert("Error closing map: " + e.message);
+    }
   };
 
   // Poll gateway status periodically

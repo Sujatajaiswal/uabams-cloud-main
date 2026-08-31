@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   --bg: #eef3f6;
   --surface: #ffffff;
   --surface-2: #f7f9fb;
@@ -1557,7 +1557,7 @@ body.fullscreen-map-mode #showAllMapsBtn {
   position: fixed !important; 
   top: 20px; 
   right: 20px; 
-  z-index: 100000;
+  z-index: 100000; pointer-events: auto !important; cursor: pointer !important;
   padding: 8px 16px !important;
   font-size: 16px !important;
   background-color: var(--blue) !important;
