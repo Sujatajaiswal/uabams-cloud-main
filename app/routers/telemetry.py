@@ -902,11 +902,17 @@ async def load_repeated_alarm_report(data: RepeatedAlarmRequest, request: Reques
     from_dt = parse_local_datetime(data.fromDate)
     to_dt = parse_local_datetime(data.toDate)
     
-    results = await db.pg_pool.fetch("""
+    query = """
         SELECT train_no AS rid, COUNT(*) as count, (array_agg(latitude))[1] as latitude, (array_agg(longitude))[1] as longitude
         FROM alert_events WHERE created_at >= $1 AND created_at <= $2
-        GROUP BY train_no ORDER BY count DESC LIMIT 1000
-    """, from_dt, to_dt)
+    """
+    args = [from_dt, to_dt]
+    rid = data.rid.strip() if data.rid else ""
+    if rid and rid.upper() != "ALL":
+        args.append(rid)
+        query += f" AND train_no = ${len(args)}"
+    query += " GROUP BY train_no ORDER BY count DESC LIMIT 1000"
+    results = await db.pg_pool.fetch(query, *args)
     
     rows = []
     for r in results:

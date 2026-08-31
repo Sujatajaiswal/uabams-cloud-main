@@ -979,7 +979,7 @@ function startAutoRefresh() {
 
 async function loadLogs() {
   try {
-    const data = await requestJson('/api/v1/logs?limit=100');
+    const data = await requestJson('/api/v1/logs?limit=100&_t=' + Date.now());
     const rows = data.logs || [];
     
     const getLogSeverity = (log) => {
@@ -1943,10 +1943,15 @@ let allRows = [];
 let currentRows = [];
 
 async function loadRepeatedAlarmReport() {
+  const rid = $('repRidInput').value.trim();
+  if (!rid) {
+    alert("Please enter a Train No");
+    return;
+  }
   const fromDate = $('repFromDate').value;
   const toDate = $('repToDate').value;
   try {
-    const data = await ApiClient.post('/api/reports/repeated-alarm/load', { fromDate, toDate });
+    const data = await ApiClient.post('/api/reports/repeated-alarm/load', { rid, fromDate, toDate });
     if ($('repTotalStocksCard')) $('repTotalStocksCard').textContent = data.totalRollingStocks ?? 0;
     repeatedAlarmsData = data.rows || [];
     renderRepeatedAlarmsTable(repeatedAlarmsData);
@@ -2087,7 +2092,9 @@ function refreshTable() {
 }
 
 async function exportRepeatedAlarmCsv() {
-  const payload = { fromDate: $('repFromDate').value, toDate: $('repToDate').value };
+  const rid = $('repRidInput').value.trim();
+  if (!rid) { alert('Please enter a Train No'); return; }
+  const payload = { rid, fromDate: $('repFromDate').value, toDate: $('repToDate').value };
   try {
     const response = await fetch('/api/reports/repeated-alarm/export/csv', {
       method: 'POST',
@@ -2101,7 +2108,9 @@ async function exportRepeatedAlarmCsv() {
 }
 
 async function exportRepeatedAlarmExcel() {
-  const payload = { fromDate: $('repFromDate').value, toDate: $('repToDate').value };
+  const rid = $('repRidInput').value.trim();
+  if (!rid) { alert('Please enter a Train No'); return; }
+  const payload = { rid, fromDate: $('repFromDate').value, toDate: $('repToDate').value };
   try {
     const response = await fetch('/api/reports/repeated-alarm/export/excel', {
       method: 'POST',
@@ -2115,7 +2124,9 @@ async function exportRepeatedAlarmExcel() {
 }
 
 async function exportRepeatedAlarmPdf() {
-  const payload = { fromDate: $('repFromDate').value, toDate: $('repToDate').value };
+  const rid = $('repRidInput').value.trim();
+  if (!rid) { alert('Please enter a Train No'); return; }
+  const payload = { rid, fromDate: $('repFromDate').value, toDate: $('repToDate').value };
   try {
     const response = await fetch('/api/reports/repeated-alarm/export/pdf', {
       method: 'POST',
@@ -3015,6 +3026,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (state.dashboard) renderDashboard(state.dashboard);
   });
 });
+
+
 
 
 

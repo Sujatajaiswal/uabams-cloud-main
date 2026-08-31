@@ -6,7 +6,7 @@
   <title>UABAMS Dashboard</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="/static/styles.css?v=36?v=20260813-v3">
+  <link rel="stylesheet" href="/static/styles.css?v=38?v=20260813-v3">
 </head>
 <body><button id="showAllMapsBtn" class="secondary hidden" onclick="closeFullscreenMap()"><i class="bi bi-x-circle"></i> Close Map</button>
   <!-- Dummy inputs to capture aggressive browser autofill -->
@@ -318,6 +318,10 @@
 
       <div class="search-toolbar">
         <div class="toolbar-item">
+          <label for="repRidInput">Train No</label>
+          <input id="repRidInput" type="text" class="form-control" placeholder="Enter Train No (e.g. TR_002)" list="recentTrainNos">
+        </div>
+        <div class="toolbar-item">
           <label for="repFromDate">From Date</label>
           <input id="repFromDate" type="datetime-local" class="form-control">
         </div>
@@ -342,13 +346,13 @@
           </div>
         </div>
         <div class="toolbar-item" style="margin-bottom: 15px; width: 100%; max-width: 400px;">
-          <input id="repSearchRid" type="text" class="form-control" placeholder="Search RID" list="recentTrainNos">
+          <input id="repSearchRid" type="text" class="form-control" placeholder="Search Train No" list="recentTrainNos">
         </div>
         <div class="table-wrapper">
           <table class="alarm-log-table" id="repeatedAlarmsTable">
             <thead>
               <tr>
-                <th data-field="rid">RID</th>
+                <th data-field="rid">Train No</th>
                 <th data-field="count">Count</th>
                 <th data-field="location">Location</th>
                 <th>Actions</th>
@@ -370,8 +374,8 @@
 
       <div class="search-toolbar">
         <div class="toolbar-item">
-          <label for="ridInput">RID</label>
-          <input id="ridInput" type="text" class="form-control" placeholder="Enter RID (e.g. TR_002)" list="recentTrainNos">
+          <label for="ridInput">Train No</label>
+          <input id="ridInput" type="text" class="form-control" placeholder="Enter Train No (e.g. TR_002)" list="recentTrainNos">
         </div>
         <div class="toolbar-item">
           <label for="fromDate">From Date</label>
@@ -442,7 +446,7 @@
           <div class="result-item">
             <i class="bi bi-tag result-icon"></i>
             <div class="result-content">
-              <span class="result-label">RID</span>
+              <span class="result-label">Train No</span>
               <strong id="currentRid" class="result-value">-</strong>
             </div>
           </div>
@@ -504,8 +508,8 @@
 
       <div class="search-toolbar" style="margin-bottom: 20px;">
         <div class="toolbar-item">
-          <label for="graphRid">Rolling Stock ID (RID)</label>
-          <input id="graphRid" type="text" class="form-control" placeholder="Enter RID (e.g. TR_002)" list="recentTrainNos">
+          <label for="graphRid">Rolling Stock ID (Train No)</label>
+          <input id="graphRid" type="text" class="form-control" placeholder="Enter Train No (e.g. TR_002)" list="recentTrainNos">
         </div>
         <div class="toolbar-item">
           <label for="graphMetricFilter">Select Metrics</label>
@@ -704,6 +708,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
-  <script src="/static/app-main.js?v=36"></script>
+  <script src="/static/app-main.js?v=38"></script>
 </body>
 </html>
+
