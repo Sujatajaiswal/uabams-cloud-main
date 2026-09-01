@@ -1942,7 +1942,7 @@ let allRows = [];
 let currentRows = [];
 
 async function loadRepeatedAlarmReport() {
-  const rid = $('repRidInput').value.trim();
+  const rid = extractTrainNo($('repRidInput').value);
   if (!rid) {
     alert("Please enter a Train No");
     return;
@@ -2003,7 +2003,7 @@ function openAlarmLogFor(rid) {
 }
 
 async function loadAlarmLogReport() {
-  const rid = $('ridInput').value.trim();
+  const rid = extractTrainNo($('ridInput').value);
   if (!rid) {
     alert("Please enter a Train No");
     return;
@@ -2090,7 +2090,7 @@ function refreshTable() {
 }
 
 async function exportRepeatedAlarmCsv() {
-  const rid = $('repRidInput').value.trim();
+  const rid = extractTrainNo($('repRidInput').value);
   if (!rid) { alert('Please enter a Train No'); return; }
   const payload = { rid, fromDate: $('repFromDate').value, toDate: $('repToDate').value };
   try {
@@ -2106,7 +2106,7 @@ async function exportRepeatedAlarmCsv() {
 }
 
 async function exportRepeatedAlarmExcel() {
-  const rid = $('repRidInput').value.trim();
+  const rid = extractTrainNo($('repRidInput').value);
   if (!rid) { alert('Please enter a Train No'); return; }
   const payload = { rid, fromDate: $('repFromDate').value, toDate: $('repToDate').value };
   try {
@@ -2122,7 +2122,7 @@ async function exportRepeatedAlarmExcel() {
 }
 
 async function exportRepeatedAlarmPdf() {
-  const rid = $('repRidInput').value.trim();
+  const rid = extractTrainNo($('repRidInput').value);
   if (!rid) { alert('Please enter a Train No'); return; }
   const payload = { rid, fromDate: $('repFromDate').value, toDate: $('repToDate').value };
   try {
@@ -2138,7 +2138,7 @@ async function exportRepeatedAlarmPdf() {
 }
 
 async function exportCsv() {
-  const rid = $('ridInput').value.trim();
+  const rid = extractTrainNo($('ridInput').value);
   if (!rid) { alert('Please enter a Train No'); return; }
   const payload = {
     rid: rid,
@@ -2160,7 +2160,7 @@ async function exportCsv() {
 }
 
 async function exportExcel() {
-  const rid = $('ridInput').value.trim();
+  const rid = extractTrainNo($('ridInput').value);
   if (!rid) { alert('Please enter a Train No'); return; }
   const payload = {
     rid: rid,
@@ -2182,7 +2182,7 @@ async function exportExcel() {
 }
 
 async function exportPdf() {
-  const rid = $('ridInput').value.trim();
+  const rid = extractTrainNo($('ridInput').value);
   if (!rid) { alert('Please enter a Train No'); return; }
   const payload = {
     rid: rid,
@@ -2316,7 +2316,7 @@ window.showFeedbackModal = showFeedbackModal;
 window.focusLocationOnMap = focusLocationOnMap;
 
 async function loadGraphData() {
-  let rid = $('graphRid').value.trim();
+  let rid = extractTrainNo($('graphRid').value);
   if (!rid) {
     alert("Please enter a Train No");
     return;

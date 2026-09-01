@@ -626,6 +626,9 @@ async def create_alert(
 
 @router.get("/api/v1/trains/{train_no}/archives")
 async def train_archives(train_no: str):
+    real_rid = await db.pg_pool.fetchval("SELECT train_no FROM trains WHERE train_no = $1 OR train_no = $2 LIMIT 1", train_no, f"TR_{train_no}")
+    if real_rid:
+        train_no = real_rid
     archives = await db.pg_pool.fetch("""
         SELECT gateway_id AS "gatewayId", sha256, received_at AS "receivedAt", train_id AS "trainId", session_name AS "sessionName", session_status AS "sessionStatus", size_bytes AS "sizeBytes", status, parse_warnings AS "parseWarnings"
         FROM archives WHERE train_id = $1 ORDER BY received_at DESC LIMIT 50
@@ -635,6 +638,9 @@ async def train_archives(train_no: str):
 
 @router.get("/api/v1/trains/{train_no}/position")
 async def train_position(train_no: str, gateway_id: str | None = None):
+    real_rid = await db.pg_pool.fetchval("SELECT train_no FROM trains WHERE train_no = $1 OR train_no = $2 LIMIT 1", train_no, f"TR_{train_no}")
+    if real_rid:
+        train_no = real_rid
     query = "SELECT gateway_id AS \"gatewayId\", latitude, longitude, position_mm AS \"positionMm\", speed AS \"speedKmph\", created_at AS \"createdAt\" FROM rms_records WHERE train_id = $1 AND gps_valid = TRUE AND latitude IS NOT NULL AND latitude != 0 AND longitude IS NOT NULL AND longitude != 0"
     args = [train_no]
     if gateway_id:
@@ -983,9 +989,11 @@ async def load_repeated_alarm_report(data: RepeatedAlarmRequest, request: Reques
     rid = data.rid.strip() if data.rid else ""
     
     if rid and rid.upper() != "ALL":
-        train_exists = await db.pg_pool.fetchval("SELECT 1 FROM trains WHERE train_no = $1", rid)
-        if not train_exists:
+        real_rid = await db.pg_pool.fetchval("SELECT train_no FROM trains WHERE train_no = $1 OR train_no = $2 LIMIT 1", rid, f"TR_{rid}")
+        if not real_rid:
             raise HTTPException(status_code=404, detail="Train not found")
+        rid = real_rid
+        data.rid = real_rid
     if rid and rid.upper() != "ALL":
         args.append(rid)
         query += f" AND train_no = ${len(args)}"
@@ -1051,9 +1059,11 @@ async def load_alarm_log_report(data: AlarmLogRequest, request: Request):
     rid = data.rid.strip() if data.rid else ""
     
     if rid and rid.upper() != "ALL":
-        train_exists = await db.pg_pool.fetchval("SELECT 1 FROM trains WHERE train_no = $1", rid)
-        if not train_exists:
+        real_rid = await db.pg_pool.fetchval("SELECT train_no FROM trains WHERE train_no = $1 OR train_no = $2 LIMIT 1", rid, f"TR_{rid}")
+        if not real_rid:
             raise HTTPException(status_code=404, detail="Train not found")
+        rid = real_rid
+        data.rid = real_rid
     if rid and rid.upper() != "ALL":
         args.append(rid)
         query += f" AND train_no = ${len(args)}"

@@ -67,7 +67,8 @@ async def train_dashboard(train_no: str, request: Request):
         return {}
         
     async with db.pg_pool.acquire() as conn:
-        train = await conn.fetchrow('SELECT train_no AS "trainNo", train_name AS "trainName", created_at AS "createdAt" FROM trains WHERE train_no = $1', train_no)
+        # Check standard and TR_ prepended
+        train = await conn.fetchrow('SELECT train_no AS "trainNo", train_name AS "trainName", created_at AS "createdAt" FROM trains WHERE train_no = $1 OR train_no = $2', train_no, f"TR_{train_no}")
         if not train:
             raise HTTPException(status_code=404, detail="Train not found")
             
