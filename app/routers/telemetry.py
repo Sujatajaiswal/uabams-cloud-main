@@ -75,11 +75,10 @@ async def mark_gateway_online(gateway_id: str, train_id: str, now: datetime) -> 
     """, gateway_id, train_id, now)
 
     await db.pg_pool.execute("""
-        INSERT INTO trains (train_no, train_name, status, updated_at, created_at)
-        VALUES ($1, $2, 'running', $3, $3)
-        ON CONFLICT (train_no) DO UPDATE SET
-            status = 'running', updated_at = EXCLUDED.updated_at
-    """, train_id, (train_id), now)
+        INSERT INTO trains (train_no, train_name, created_at)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (train_no) DO NOTHING
+    """, train_id, train_id, now)
 
     await db.pg_pool.execute("""
         INSERT INTO gateway_status (gateway_id, train_id, online, last_heartbeat)
