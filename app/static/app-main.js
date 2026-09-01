@@ -1129,12 +1129,8 @@ async function cleanupData() {
     radiusMeters: Number($('cleanupRadius')?.value || 100),
     reason: $('cleanupReason')?.value.trim() || null,
   };
-  if (!payload.gatewayId || payload.gatewayId === 'All Gateways') {
-    setText('resetOutput', 'Please select a specific Gateway.');
-    return;
-  }
-  if (!payload.startTime || !payload.endTime) {
-    setText('resetOutput', 'Please provide both Start Time and End Time.');
+  if (!payload.gatewayId || payload.gatewayId === 'All Gateways' || !payload.startTime || !payload.endTime) {
+    setText('resetOutput', 'Please select a specific Gateway. or Please provide both Start Time and End Time.');
     return;
   }
   if ((payload.latitude !== null && payload.longitude === null) || (payload.latitude === null && payload.longitude !== null)) {
