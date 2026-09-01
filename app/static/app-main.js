@@ -1025,8 +1025,6 @@ async function loadLogs() {
   } catch (error) {
     console.error('Logs Error:', error);
     setHtml('logsTable', `<tr><td colspan="8" style="color:red;text-align:center;padding:20px;">Failed to refresh logs: ${error.message}</td></tr>`);
-  } catch (error) {
-    setHtml('logsTable', `<tr><td colspan="8" class="error-text">${escapeHtml(error.message)}</td></tr>`);
   }
 }
 
