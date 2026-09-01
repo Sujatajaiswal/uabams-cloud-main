@@ -1,3 +1,7 @@
+function extractTrainNo(val) {
+  if (!val) return '';
+  return val.split(' - ')[0].trim();
+}
 window.closeFullscreenMap = function() {
   console.log('Close map clicked');
   document.body.classList.remove('fullscreen-map-mode');
