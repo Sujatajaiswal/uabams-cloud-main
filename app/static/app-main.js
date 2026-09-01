@@ -987,7 +987,7 @@ async function loadLogs() {
       const err = String(log.errorMessage || '').toLowerCase();
       const hasError = (err && err !== '-' && err !== 'none' && err !== 'null');
       if (act.includes('delete') || act.includes('remove') || act.includes('reset') || act.includes('failed') || act.includes('unauthorized')) return 'CRITICAL';
-      if (act.includes('login') || act.includes('logout') || act.includes('calibrate') || act.includes('export')) return hasError ? 'WARNING' : 'WARNING';
+      if (act.includes('login') || act.includes('logout') || act.includes('calibrate') || act.includes('export')) return hasError ? 'WARNING' : 'NORMAL';
       if (hasError) return 'CRITICAL';
       return 'NORMAL';
     };
