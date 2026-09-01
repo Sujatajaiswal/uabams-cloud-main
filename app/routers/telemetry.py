@@ -984,6 +984,11 @@ async def load_repeated_alarm_report(data: RepeatedAlarmRequest, request: Reques
     """
     args = [from_dt, to_dt]
     rid = data.rid.strip() if data.rid else ""
+    
+    if rid and rid.upper() != "ALL":
+        train_exists = await db.pg_pool.fetchval("SELECT 1 FROM trains WHERE train_no = $1", rid)
+        if not train_exists:
+            raise HTTPException(status_code=404, detail="Train not found")
     if rid and rid.upper() != "ALL":
         args.append(rid)
         query += f" AND train_no = ${len(args)}"
@@ -1047,6 +1052,11 @@ async def load_alarm_log_report(data: AlarmLogRequest, request: Request):
     args = [from_dt, to_dt]
     
     rid = data.rid.strip() if data.rid else ""
+    
+    if rid and rid.upper() != "ALL":
+        train_exists = await db.pg_pool.fetchval("SELECT 1 FROM trains WHERE train_no = $1", rid)
+        if not train_exists:
+            raise HTTPException(status_code=404, detail="Train not found")
     if rid and rid.upper() != "ALL":
         args.append(rid)
         query += f" AND train_no = ${len(args)}"
