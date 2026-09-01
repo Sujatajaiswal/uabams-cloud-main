@@ -36,6 +36,8 @@ services:
       JWT_SECRET: local-docker-change-me
       JWT_ALGORITHM: HS256
       ADMIN_RESET_KEY: local-admin-key
+      GATEWAY_API_KEY_GW01: local-gw1-key
+      GATEWAY_API_KEY_GW02: local-gw2-key
       OPERATOR_USERNAME: operator
       OPERATOR_PASSWORD: operator123
       ADMIN_USERNAME: admin
