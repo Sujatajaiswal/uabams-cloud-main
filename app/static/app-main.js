@@ -1948,7 +1948,7 @@ let currentRows = [];
 async function loadRepeatedAlarmReport() {
   const rid = extractTrainNo($('repRidInput').value);
   if (!rid) {
-    alert("Please enter a Train No");
+    alert("Please enter the train no");
     return;
   }
   const fromDate = $('repFromDate').value;
@@ -2009,7 +2009,7 @@ function openAlarmLogFor(rid) {
 async function loadAlarmLogReport() {
   const rid = extractTrainNo($('ridInput').value);
   if (!rid) {
-    alert("Please enter a Train No");
+    alert("Please enter the train no");
     return;
   }
   const request = {
@@ -2322,7 +2322,7 @@ window.focusLocationOnMap = focusLocationOnMap;
 async function loadGraphData() {
   let rid = extractTrainNo($('graphRid').value);
   if (!rid) {
-    alert("Please enter a Train No");
+    alert("Please enter the train no");
     return;
   }
   // Extract real ID before " - " if present
