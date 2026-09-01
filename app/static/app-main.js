@@ -2269,6 +2269,11 @@ function initializeReports() {
   $('repToDate')?.addEventListener("change", () => DateUtils.applyDateRangeConstraints("repFromDate", "repToDate"));
   $('fromDate')?.addEventListener("change", () => DateUtils.applyDateRangeConstraints("fromDate", "toDate"));
   $('toDate')?.addEventListener("change", () => DateUtils.applyDateRangeConstraints("fromDate", "toDate"));
+  DateUtils.initializeDefaultDates("cleanupStart", "cleanupEnd");
+  DateUtils.applyDateRangeConstraints("cleanupStart", "cleanupEnd");
+  $('cleanupStart')?.addEventListener("change", () => DateUtils.applyDateRangeConstraints("cleanupStart", "cleanupEnd"));
+  $('cleanupEnd')?.addEventListener("change", () => DateUtils.applyDateRangeConstraints("cleanupStart", "cleanupEnd"));
+
   
   $('repLoadReportBtn')?.addEventListener("click", loadRepeatedAlarmReport);
   $('loadReportBtn')?.addEventListener("click", loadAlarmLogReport);
