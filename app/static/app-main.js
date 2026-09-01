@@ -986,7 +986,7 @@ async function loadLogs() {
       const act = String(log.action || '').toLowerCase();
       const err = String(log.errorMessage || '').toLowerCase();
       const hasError = (err && err !== '-' && err !== 'none' && err !== 'null');
-      if (act.includes('delete') || act.includes('remove') || act.includes('reset') || act.includes('failed') || act.includes('unauthorized')) return 'CRITICAL';
+      if (act.includes('delete') || act.includes('cleanup') || act.includes('remove') || act.includes('reset') || act.includes('failed') || act.includes('unauthorized')) return 'CRITICAL';
       if (act.includes('login') || act.includes('logout') || act.includes('calibrate') || act.includes('export')) return hasError ? 'WARNING' : 'NORMAL';
       if (hasError) return 'CRITICAL';
       return 'NORMAL';
@@ -1022,6 +1022,9 @@ async function loadLogs() {
         </tr>
       `;
     }).join('') : '<tr><td colspan="8">No logs found.</td></tr>');
+  } catch (error) {
+    console.error('Logs Error:', error);
+    setHtml('logsTable', `<tr><td colspan="8" style="color:red;text-align:center;padding:20px;">Failed to refresh logs: ${error.message}</td></tr>`);
   } catch (error) {
     setHtml('logsTable', `<tr><td colspan="8" class="error-text">${escapeHtml(error.message)}</td></tr>`);
   }
@@ -1126,8 +1129,16 @@ async function cleanupData() {
     radiusMeters: Number($('cleanupRadius')?.value || 100),
     reason: $('cleanupReason')?.value.trim() || null,
   };
-  if (!payload.startTime && !payload.endTime && (payload.latitude === null || payload.longitude === null)) {
-    setText('resetOutput', 'Provide a time range or latitude/longitude before deleting data.');
+  if (!payload.gatewayId || payload.gatewayId === 'All Gateways') {
+    setText('resetOutput', 'Please select a specific Gateway.');
+    return;
+  }
+  if (!payload.startTime || !payload.endTime) {
+    setText('resetOutput', 'Please provide both Start Time and End Time.');
+    return;
+  }
+  if ((payload.latitude !== null && payload.longitude === null) || (payload.latitude === null && payload.longitude !== null)) {
+    setText('resetOutput', 'Latitude and Longitude must be provided together as a pair.');
     return;
   }
   if (!confirm(`Delete matching data for train ${trainNo}?`)) return;
