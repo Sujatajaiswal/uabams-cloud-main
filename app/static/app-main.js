@@ -1234,7 +1234,7 @@ function calibrationCard(gatewayId) {
       </div>
       <span data-role="calStatus"></span>
       <pre class="output compact" data-role="calOutput"></pre>
-      <div class="cal-section-title" style="margin-top:16px">📡 Command History</div>
+      <div class="cal-section-title" style="margin-top:16px">Command History</div>
       <div data-role="cmdHistory" style="margin-top:6px;min-height:24px"><em style="opacity:0.5">Load calibration to view history</em></div>
     </article>
   `;
@@ -1395,7 +1395,7 @@ async function loadCommandHistory(gatewayId, card) {
       const color = s === 'success' ? '#28a745' : s === 'failed' ? '#dc3545' : s === 'delivered' ? '#007bff' : '#6c757d';
       return `<span style="background:${color};color:#fff;padding:1px 7px;border-radius:10px;font-size:0.78em">${s}</span>`;
     };
-    historyEl.innerHTML = `<table style="width:100%;font-size:0.82em;border-collapse:collapse">
+    historyEl.innerHTML = `<div style="overflow-x:auto; width:100%;"><table style="width:100%;font-size:0.82em;border-collapse:collapse">
       <thead><tr style="border-bottom:1px solid #444">
         <th style="text-align:left;padding:3px 6px">ID</th>
         <th style="text-align:left;padding:3px 6px">Type</th>
@@ -1404,13 +1404,13 @@ async function loadCommandHistory(gatewayId, card) {
         <th style="text-align:left;padding:3px 6px">Created</th>
       </tr></thead>
       <tbody>${cmds.slice(0, 10).map(c => `<tr style="border-bottom:1px solid #333">
-        <td style="padding:3px 6px;font-family:monospace;font-size:0.85em">${(c.commandId || c.command_id || '').slice(-16)}</td>
+        <td style="padding:3px 6px;font-family:monospace;font-size:0.85em">${(c.commandId || c.command_id || '').slice(-8)}</td>
         <td style="padding:3px 6px">${c.type || '-'}</td>
         <td style="padding:3px 6px">${c.version || '-'}</td>
         <td style="padding:3px 6px">${statusBadge(c.status || 'unknown')}</td>
         <td style="padding:3px 6px">${c.createdAt || c.created_at ? new Date(c.createdAt || c.created_at).toLocaleString() : '-'}</td>
       </tr>`).join('')}</tbody>
-    </table>`;
+    </table></div>`;
   } catch (e) {
     historyEl.innerHTML = `<em style="color:#dc3545">Failed to load: ${e.message}</em>`;
   }
