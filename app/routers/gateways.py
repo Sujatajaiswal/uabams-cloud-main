@@ -98,6 +98,11 @@ async def get_calibration(
     adxl_right_data = parse_jsonb(calibration.get("adxl_right"))
     bogie_data = parse_jsonb(calibration.get("bogie"))
     encoder_data = parse_jsonb(calibration.get("encoder"))
+    
+    scrubbed_encoder = {}
+    for k, default_val in default_encoder.items():
+        val = encoder_data.get(k)
+        scrubbed_encoder[k] = val if val else default_val
 
     return {
         "gatewayId": gateway_id,
@@ -105,7 +110,7 @@ async def get_calibration(
         "adxl_left": {**default_adxl, **adxl_left_data},
         "adxl_right": {**default_adxl, **adxl_right_data},
         "bogie": {**default_bogie, **bogie_data},
-        "encoder": {**default_encoder, **encoder_data},
+        "encoder": scrubbed_encoder,
     }
 
 @router.post("/api/v1/calibration/{gateway_id}")
@@ -158,7 +163,12 @@ async def save_calibration(
     current_adxl_left = {**default_adxl, **parse_jsonb(existing.get("adxl_left"))}
     current_adxl_right = {**default_adxl, **parse_jsonb(existing.get("adxl_right"))}
     current_bogie = {**default_bogie, **parse_jsonb(existing.get("bogie"))}
-    current_encoder = {**default_encoder, **parse_jsonb(existing.get("encoder"))}
+    
+    existing_encoder_raw = parse_jsonb(existing.get("encoder"))
+    current_encoder = {}
+    for k, default_val in default_encoder.items():
+        val = existing_encoder_raw.get(k)
+        current_encoder[k] = val if val else default_val
 
     adxl_left = {**current_adxl_left, **(data.adxlLeft.model_dump() if data.adxlLeft else {})}
     adxl_right = {**current_adxl_right, **(data.adxlRight.model_dump() if data.adxlRight else {})}
