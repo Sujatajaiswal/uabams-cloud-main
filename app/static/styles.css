@@ -1563,3 +1563,7 @@ body.fullscreen-map-mode #showAllMapsBtn {
   background-color: var(--blue) !important;
   color: white !important;
 }
+
+
+/* Override badge text color to black as requested by user */
+.badge { color: black !important; }
