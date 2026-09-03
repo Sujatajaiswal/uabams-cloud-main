@@ -981,6 +981,11 @@ function startAutoRefresh() {
 }
 
 async function loadLogs() {
+  const btn = $('loadLogsBtn');
+  if (btn) {
+    btn.textContent = 'Refreshing...';
+    btn.disabled = true;
+  }
   try {
     const data = await requestJson('/api/v1/logs?limit=100&_t=' + Date.now());
     const rows = data.logs || [];
