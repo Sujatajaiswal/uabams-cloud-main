@@ -2740,7 +2740,7 @@ async function loadUsersView() {
       
       html += `<tr>
         <td><strong>${escapeHtml(u.username)}</strong></td>
-        <td><span class="badge" style="background:var(--border)">${u.role.toUpperCase()}</span></td>
+        <td><span class="badge" style="background:var(--blue); color:white;">${u.role.toUpperCase()}</span></td>
         <td><span class="badge ${badgeClass}">${statusText}</span></td>
         <td style="font-size:12px; color:var(--text-muted)">${perms.join(', ') || 'None'}</td>
         <td>${new Date(u.created_at).toLocaleDateString()}</td>
@@ -2792,6 +2792,18 @@ if (userForm) {
     const canConfigureThresholds = document.getElementById('userPermConfigureThresholds').checked;
     const canManageUsers = document.getElementById('userPermManageUsers').checked;
     const isActive = document.getElementById('userIsActive').checked;
+    const usernameRegex = /^[A-Za-z0-9_]+$/;
+    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@#$%!]).{8,}$/;
+    
+    if (!id && !usernameRegex.test(username)) {
+      alert("Invalid Username. Use only letters, numbers, and underscores (no spaces).");
+      return;
+    }
+    if (password && !passwordRegex.test(password)) {
+      alert("Invalid Password. It must be at least 8 characters long, contain at least 1 uppercase letter, 1 lowercase letter, 1 number, and 1 special character (@, #, $, %, !).");
+      return;
+    }
+
 
     try {
       if (id) {

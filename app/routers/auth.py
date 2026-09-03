@@ -4,6 +4,25 @@ import uuid
 from secrets import token_hex
 from datetime import timedelta
 from passlib.hash import bcrypt
+
+import re
+
+def validate_username(username: str):
+    if not re.match(r'^[A-Za-z0-9_]+$', username):
+        raise HTTPException(status_code=400, detail="Invalid Username. Use only letters, numbers, and underscores (no spaces).")
+
+def validate_password(password: str):
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters long.")
+    if not re.search(r'[A-Z]', password):
+        raise HTTPException(status_code=400, detail="Password must contain at least 1 uppercase letter.")
+    if not re.search(r'[a-z]', password):
+        raise HTTPException(status_code=400, detail="Password must contain at least 1 lowercase letter.")
+    if not re.search(r'\d', password):
+        raise HTTPException(status_code=400, detail="Password must contain at least 1 number.")
+    if not re.search(r'[@#$%!]', password):
+        raise HTTPException(status_code=400, detail="Password must contain at least 1 special character (@, #, $, %, !).")
+
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -339,6 +358,9 @@ async def create_user(data: UserCreateRequest, request: Request):
         existing = await db.pg_pool.fetchrow("SELECT id FROM users WHERE username = $1", data.username)
         if existing:
             raise HTTPException(status_code=400, detail="Username already exists")
+        
+        validate_username(data.username)
+        validate_password(data.password)
         
         hashed_pw = bcrypt.hash(data.password)
         await db.pg_pool.execute(
