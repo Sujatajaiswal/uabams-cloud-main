@@ -380,10 +380,24 @@ async def update_user(user_id: int, data: UserUpdateRequest, request: Request):
         user = await db.pg_pool.fetchrow("SELECT * FROM users WHERE id = $1", user_id)
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
+        if data.username is not None and data.username != user['username']:
+            validate_username(data.username)
+            existing = await db.pg_pool.fetchrow("SELECT id FROM users WHERE username = $1", data.username)
+            if existing:
+                raise HTTPException(status_code=400, detail="Username already exists")
+            
+            # Prevent renaming the default admin
+            if user['username'] == 'admin':
+                raise HTTPException(status_code=400, detail="Cannot change the username of the default admin account")
+
         
         updates = []
         params = []
         idx = 1
+        if data.username is not None and data.username != user['username']:
+            updates.append(f"username = ${idx}")
+            params.append(data.username)
+            idx += 1
         if data.role is not None:
             updates.append(f"role = ${idx}")
             params.append(data.role.lower())

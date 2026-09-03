@@ -2795,7 +2795,7 @@ if (userForm) {
     const usernameRegex = /^[A-Za-z0-9_]+$/;
     const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@#$%!]).{8,}$/;
     
-    if (!id && !usernameRegex.test(username)) {
+    if (!usernameRegex.test(username)) {
       alert("Invalid Username. Use only letters, numbers, and underscores (no spaces).");
       return;
     }
@@ -2818,7 +2818,7 @@ if (userForm) {
         if (password) payload.password = password;
 
           if (currentEditingUser) {
-            const noChanges = !password && 
+            const noChanges = !password && currentEditingUser.username === username && 
               currentEditingUser.role.toLowerCase() === role &&
               currentEditingUser.can_view_alerts === canViewAlerts &&
               currentEditingUser.can_configure_thresholds === canConfigureThresholds &&
@@ -2874,7 +2874,7 @@ if (userForm) {
   
   document.getElementById('userId').value = user.id;
   document.getElementById('userUsername').value = user.username;
-  document.getElementById('userUsername').readOnly = true;
+  document.getElementById('userUsername').readOnly = false;
   document.getElementById('userPassword').required = false;
   document.getElementById('userRole').value = user.role.toLowerCase();
   

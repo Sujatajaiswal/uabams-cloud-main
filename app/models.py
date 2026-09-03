@@ -159,6 +159,7 @@ class UserCreateRequest(BaseModel):
     can_view_alerts: bool = True
 
 class UserUpdateRequest(BaseModel):
+    username: str | None = None
     role: str | None = None
     password: str | None = None
     is_active: bool | None = None
