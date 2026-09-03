@@ -1181,17 +1181,17 @@ function calibrationCard(gatewayId) {
         <div class="adxl-col">
           <div class="cal-section-title">1. ADXL Left Offsets</div>
           <div class="cal-form-col">
-            <label>ADXL X<input data-field="adxlLeftX" type="number" placeholder="Enter offset of X-axis"></label>
-            <label>ADXL Y<input data-field="adxlLeftY" type="number" placeholder="Enter offset of Y-axis"></label>
-            <label>ADXL Z<input data-field="adxlLeftZ" type="number" placeholder="Enter offset of Z-axis"></label>
+            <label>ADXL X<input data-field="adxlLeftX" type="number" placeholder="Enter offset of X-axis (default 0)"></label>
+            <label>ADXL Y<input data-field="adxlLeftY" type="number" placeholder="Enter offset of Y-axis (default 0)"></label>
+            <label>ADXL Z<input data-field="adxlLeftZ" type="number" placeholder="Enter offset of Z-axis (default 0)"></label>
           </div>
         </div>
         <div class="adxl-col">
           <div class="cal-section-title">2. ADXL Right Offsets</div>
           <div class="cal-form-col">
-            <label>ADXL X<input data-field="adxlRightX" type="number" placeholder="Enter offset of X-axis"></label>
-            <label>ADXL Y<input data-field="adxlRightY" type="number" placeholder="Enter offset of Y-axis"></label>
-            <label>ADXL Z<input data-field="adxlRightZ" type="number" placeholder="Enter offset of Z-axis"></label>
+            <label>ADXL X<input data-field="adxlRightX" type="number" placeholder="Enter offset of X-axis (default 0)"></label>
+            <label>ADXL Y<input data-field="adxlRightY" type="number" placeholder="Enter offset of Y-axis (default 0)"></label>
+            <label>ADXL Z<input data-field="adxlRightZ" type="number" placeholder="Enter offset of Z-axis (default 0)"></label>
           </div>
         </div>
       </div>
@@ -1200,23 +1200,23 @@ function calibrationCard(gatewayId) {
       <div class="bogie-section">
         <div class="sub-label">IIS Vibration</div>
         <div class="row-3col">
-          <label>IIS Offset X<input data-field="iisX" type="number" placeholder="Enter IIS offset of X-axis"></label>
-          <label>IIS Offset Y<input data-field="iisY" type="number" placeholder="Enter IIS offset of Y-axis"></label>
-          <label>IIS Offset Z<input data-field="iisZ" type="number" placeholder="Enter IIS offset of Z-axis"></label>
+          <label>IIS Offset X<input data-field="iisX" type="number" placeholder="Enter IIS offset of X-axis (default 0)"></label>
+          <label>IIS Offset Y<input data-field="iisY" type="number" placeholder="Enter IIS offset of Y-axis (default 0)"></label>
+          <label>IIS Offset Z<input data-field="iisZ" type="number" placeholder="Enter IIS offset of Z-axis (default 0)"></label>
         </div>
 
         <div class="sub-label" style="margin-top: 8px;">IMU Accelerometer</div>
         <div class="row-3col">
-          <label>IMU Accel Offset X<input data-field="imuAccelX" type="number" placeholder="Enter IMU Accel offset of X-axis"></label>
-          <label>IMU Accel Offset Y<input data-field="imuAccelY" type="number" placeholder="Enter IMU Accel offset of Y-axis"></label>
-          <label>IMU Accel Offset Z<input data-field="imuAccelZ" type="number" placeholder="Enter IMU Accel offset of Z-axis"></label>
+          <label>IMU Accel Offset X<input data-field="imuAccelX" type="number" placeholder="Enter IMU Accel offset of X-axis (default 0)"></label>
+          <label>IMU Accel Offset Y<input data-field="imuAccelY" type="number" placeholder="Enter IMU Accel offset of Y-axis (default 0)"></label>
+          <label>IMU Accel Offset Z<input data-field="imuAccelZ" type="number" placeholder="Enter IMU Accel offset of Z-axis (default 0)"></label>
         </div>
 
         <div class="sub-label" style="margin-top: 8px;">IMU Gyroscope</div>
         <div class="row-3col">
-          <label>IMU Gyro Offset X<input data-field="imuGyroX" type="number" placeholder="Enter IMU Gyro offset of X-axis"></label>
-          <label>IMU Gyro Offset Y<input data-field="imuGyroY" type="number" placeholder="Enter IMU Gyro offset of Y-axis"></label>
-          <label>IMU Gyro Offset Z<input data-field="imuGyroZ" type="number" placeholder="Enter IMU Gyro offset of Z-axis"></label>
+          <label>IMU Gyro Offset X<input data-field="imuGyroX" type="number" placeholder="Enter IMU Gyro offset of X-axis (default 0)"></label>
+          <label>IMU Gyro Offset Y<input data-field="imuGyroY" type="number" placeholder="Enter IMU Gyro offset of Y-axis (default 0)"></label>
+          <label>IMU Gyro Offset Z<input data-field="imuGyroZ" type="number" placeholder="Enter IMU Gyro offset of Z-axis (default 0)"></label>
         </div>
       </div>
 
@@ -1330,31 +1330,31 @@ async function saveCalibration(gatewayId) {
 
   const payload = {
     adxlLeft: {
-      offset_x: Number(field(card, 'adxlLeftX')?.value ?? 0),
-      offset_y: Number(field(card, 'adxlLeftY')?.value ?? 0),
-      offset_z: Number(field(card, 'adxlLeftZ')?.value ?? 0),
+      offset_x: (field(card, 'adxlLeftX')?.value !== '' ? Number(field(card, 'adxlLeftX')?.value) : 0),
+      offset_y: (field(card, 'adxlLeftY')?.value !== '' ? Number(field(card, 'adxlLeftY')?.value) : 0),
+      offset_z: (field(card, 'adxlLeftZ')?.value !== '' ? Number(field(card, 'adxlLeftZ')?.value) : 0),
     },
     adxlRight: {
-      offset_x: Number(field(card, 'adxlRightX')?.value ?? 0),
-      offset_y: Number(field(card, 'adxlRightY')?.value ?? 0),
-      offset_z: Number(field(card, 'adxlRightZ')?.value ?? 0),
+      offset_x: (field(card, 'adxlRightX')?.value !== '' ? Number(field(card, 'adxlRightX')?.value) : 0),
+      offset_y: (field(card, 'adxlRightY')?.value !== '' ? Number(field(card, 'adxlRightY')?.value) : 0),
+      offset_z: (field(card, 'adxlRightZ')?.value !== '' ? Number(field(card, 'adxlRightZ')?.value) : 0),
     },
     bogie: {
-      iis_offset_x: Number(field(card, 'iisX')?.value ?? 0),
-      iis_offset_y: Number(field(card, 'iisY')?.value ?? 0),
-      iis_offset_z: Number(field(card, 'iisZ')?.value ?? 0),
-      imu_accel_offset_x: Number(field(card, 'imuAccelX')?.value ?? 0),
-      imu_accel_offset_y: Number(field(card, 'imuAccelY')?.value ?? 0),
-      imu_accel_offset_z: Number(field(card, 'imuAccelZ')?.value ?? 0),
-      imu_gyro_offset_x: Number(field(card, 'imuGyroX')?.value ?? 0),
-      imu_gyro_offset_y: Number(field(card, 'imuGyroY')?.value ?? 0),
-      imu_gyro_offset_z: Number(field(card, 'imuGyroZ')?.value ?? 0),
+      iis_offset_x: (field(card, 'iisX')?.value !== '' ? Number(field(card, 'iisX')?.value) : 0),
+      iis_offset_y: (field(card, 'iisY')?.value !== '' ? Number(field(card, 'iisY')?.value) : 0),
+      iis_offset_z: (field(card, 'iisZ')?.value !== '' ? Number(field(card, 'iisZ')?.value) : 0),
+      imu_accel_offset_x: (field(card, 'imuAccelX')?.value !== '' ? Number(field(card, 'imuAccelX')?.value) : 0),
+      imu_accel_offset_y: (field(card, 'imuAccelY')?.value !== '' ? Number(field(card, 'imuAccelY')?.value) : 0),
+      imu_accel_offset_z: (field(card, 'imuAccelZ')?.value !== '' ? Number(field(card, 'imuAccelZ')?.value) : 0),
+      imu_gyro_offset_x: (field(card, 'imuGyroX')?.value !== '' ? Number(field(card, 'imuGyroX')?.value) : 0),
+      imu_gyro_offset_y: (field(card, 'imuGyroY')?.value !== '' ? Number(field(card, 'imuGyroY')?.value) : 0),
+      imu_gyro_offset_z: (field(card, 'imuGyroZ')?.value !== '' ? Number(field(card, 'imuGyroZ')?.value) : 0),
     },
     encoder: {
-      wheel_diameter_m: Number(field(card, 'wheelDiameterM')?.value ?? 0.915),
-      encoder_ppr: Number(field(card, 'encoderPpr')?.value ?? 100),
-      spatial_interval_mm: Number(field(card, 'spatialIntervalMm')?.value ?? 250),
-      trigger_start_speed_kmph: Number(field(card, 'triggerStartSpeedKmph')?.value ?? 20.0),
+      wheel_diameter_m: (field(card, 'wheelDiameterM')?.value !== '' ? Number(field(card, 'wheelDiameterM')?.value) : 0.915),
+      encoder_ppr: (field(card, 'encoderPpr')?.value !== '' ? Number(field(card, 'encoderPpr')?.value) : 100),
+      spatial_interval_mm: (field(card, 'spatialIntervalMm')?.value !== '' ? Number(field(card, 'spatialIntervalMm')?.value) : 250),
+      trigger_start_speed_kmph: (field(card, 'triggerStartSpeedKmph')?.value !== '' ? Number(field(card, 'triggerStartSpeedKmph')?.value) : 20.0),
     },
   };
 
