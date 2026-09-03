@@ -867,7 +867,7 @@ async def reset_bad_data(
         
         args.append(lon - lon_delta)
         args.append(lon + lon_delta)
-        cond_lon = f"latitude BETWEEN ${len(args)-1} AND ${len(args)}"
+        cond_lon = f"longitude BETWEEN ${len(args)-1} AND ${len(args)}"
         
         where_peak += f" AND {cond_lat} AND {cond_lon}"
         where_alert += f" AND {cond_lat} AND {cond_lon}"
@@ -919,6 +919,7 @@ async def reset_session(
         await db.pg_pool.execute("DELETE FROM rms_records WHERE train_id = $1", data.trainNo)
         await db.pg_pool.execute("DELETE FROM fault_records WHERE train_id = $1", data.trainNo)
         await db.pg_pool.execute("DELETE FROM alert_events WHERE train_no = $1", data.trainNo)
+        await db.pg_pool.execute("DELETE FROM uploaded_archives WHERE gateway_id IN (SELECT gateway_id FROM gateways WHERE train_id = $1)", data.trainNo)
 
     gateways = await db.pg_pool.fetch("SELECT gateway_id AS \"gatewayId\" FROM gateways WHERE train_id = $1", data.trainNo)
     queued_commands = []

@@ -1465,7 +1465,7 @@ async function resetSession() {
   }
 
   // Step 2: confirm
-  if (!confirm(`⚠️ This will reset the session for train ${trainNo} and send a RESET command to all its gateways.\n\nProceed?`)) return;
+  if (!confirm(`Are you sure? This will reset the session for train ${trainNo} and send a RESET command to all its gateways.\n\nProceed?`)) return;
 
   try {
     const data = await requestJson('/api/v1/sessions/reset', {
