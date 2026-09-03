@@ -1180,17 +1180,17 @@ function calibrationCard(gatewayId) {
         <div class="adxl-col">
           <div class="cal-section-title">1. ADXL Left Offsets</div>
           <div class="cal-form-col">
-            <label>ADXL X<input data-field="adxlLeftX" type="number" min="-32768" max="32767" placeholder="Enter offset of X-axis (default 0)"></label>
-            <label>ADXL Y<input data-field="adxlLeftY" type="number" min="-32768" max="32767" placeholder="Enter offset of Y-axis (default 0)"></label>
-            <label>ADXL Z<input data-field="adxlLeftZ" type="number" min="-32768" max="32767" placeholder="Enter offset of Z-axis (default 0)"></label>
+            <label>ADXL X<input data-field="adxlLeftX" type="number" min="-32768" max="32767" placeholder="Default: 0"></label>
+            <label>ADXL Y<input data-field="adxlLeftY" type="number" min="-32768" max="32767" placeholder="Default: 0"></label>
+            <label>ADXL Z<input data-field="adxlLeftZ" type="number" min="-32768" max="32767" placeholder="Default: 0"></label>
           </div>
         </div>
         <div class="adxl-col">
           <div class="cal-section-title">2. ADXL Right Offsets</div>
           <div class="cal-form-col">
-            <label>ADXL X<input data-field="adxlRightX" type="number" min="-32768" max="32767" placeholder="Enter offset of X-axis (default 0)"></label>
-            <label>ADXL Y<input data-field="adxlRightY" type="number" min="-32768" max="32767" placeholder="Enter offset of Y-axis (default 0)"></label>
-            <label>ADXL Z<input data-field="adxlRightZ" type="number" min="-32768" max="32767" placeholder="Enter offset of Z-axis (default 0)"></label>
+            <label>ADXL X<input data-field="adxlRightX" type="number" min="-32768" max="32767" placeholder="Default: 0"></label>
+            <label>ADXL Y<input data-field="adxlRightY" type="number" min="-32768" max="32767" placeholder="Default: 0"></label>
+            <label>ADXL Z<input data-field="adxlRightZ" type="number" min="-32768" max="32767" placeholder="Default: 0"></label>
           </div>
         </div>
       </div>
@@ -1199,32 +1199,32 @@ function calibrationCard(gatewayId) {
       <div class="bogie-section">
         <div class="sub-label">IIS Vibration</div>
         <div class="row-3col">
-          <label>IIS Offset X<input data-field="iisX" type="number" min="-32768" max="32767" placeholder="Enter IIS offset of X-axis (default 0)"></label>
-          <label>IIS Offset Y<input data-field="iisY" type="number" min="-32768" max="32767" placeholder="Enter IIS offset of Y-axis (default 0)"></label>
-          <label>IIS Offset Z<input data-field="iisZ" type="number" min="-32768" max="32767" placeholder="Enter IIS offset of Z-axis (default 0)"></label>
+          <label>IIS Offset X<input data-field="iisX" type="number" min="-32768" max="32767" placeholder="Default: 0"></label>
+          <label>IIS Offset Y<input data-field="iisY" type="number" min="-32768" max="32767" placeholder="Default: 0"></label>
+          <label>IIS Offset Z<input data-field="iisZ" type="number" min="-32768" max="32767" placeholder="Default: 0"></label>
         </div>
 
         <div class="sub-label" style="margin-top: 8px;">IMU Accelerometer</div>
         <div class="row-3col">
-          <label>IMU Accel Offset X<input data-field="imuAccelX" type="number" min="-32768" max="32767" placeholder="Enter IMU Accel offset of X-axis (default 0)"></label>
-          <label>IMU Accel Offset Y<input data-field="imuAccelY" type="number" min="-32768" max="32767" placeholder="Enter IMU Accel offset of Y-axis (default 0)"></label>
-          <label>IMU Accel Offset Z<input data-field="imuAccelZ" type="number" min="-32768" max="32767" placeholder="Enter IMU Accel offset of Z-axis (default 0)"></label>
+          <label>IMU Accel Offset X<input data-field="imuAccelX" type="number" min="-32768" max="32767" placeholder="Default: 0"></label>
+          <label>IMU Accel Offset Y<input data-field="imuAccelY" type="number" min="-32768" max="32767" placeholder="Default: 0"></label>
+          <label>IMU Accel Offset Z<input data-field="imuAccelZ" type="number" min="-32768" max="32767" placeholder="Default: 0"></label>
         </div>
 
         <div class="sub-label" style="margin-top: 8px;">IMU Gyroscope</div>
         <div class="row-3col">
-          <label>IMU Gyro Offset X<input data-field="imuGyroX" type="number" min="-32768" max="32767" placeholder="Enter IMU Gyro offset of X-axis (default 0)"></label>
-          <label>IMU Gyro Offset Y<input data-field="imuGyroY" type="number" min="-32768" max="32767" placeholder="Enter IMU Gyro offset of Y-axis (default 0)"></label>
-          <label>IMU Gyro Offset Z<input data-field="imuGyroZ" type="number" min="-32768" max="32767" placeholder="Enter IMU Gyro offset of Z-axis (default 0)"></label>
+          <label>IMU Gyro Offset X<input data-field="imuGyroX" type="number" min="-32768" max="32767" placeholder="Default: 0"></label>
+          <label>IMU Gyro Offset Y<input data-field="imuGyroY" type="number" min="-32768" max="32767" placeholder="Default: 0"></label>
+          <label>IMU Gyro Offset Z<input data-field="imuGyroZ" type="number" min="-32768" max="32767" placeholder="Default: 0"></label>
         </div>
       </div>
 
       <div class="cal-section-title">4. Encoder Settings</div>
       <div class="row-4col">
-        <label>Wheel Diameter (m)<input data-field="wheelDiameterM" type="number" step="0.001" min="0.8" max="1.0" placeholder="Enter wheel diameter (default 0.915)"></label>
-        <label>Encoder PPR<input data-field="encoderPpr" type="number" min="100" max="4096" placeholder="Enter encoder PPR (default 100)"></label>
-        <label>Spatial Interval (mm)<input data-field="spatialIntervalMm" type="number" min="100" max="500" placeholder="Enter spatial interval in mm (default 250)"></label>
-        <label>Trigger Start Speed (km/h)<input data-field="triggerStartSpeedKmph" type="number" step="0.1" min="10.0" max="40.0" placeholder="Enter trigger start speed in km/h (default 20.0)"></label>
+        <label>Wheel Diameter (m)<input data-field="wheelDiameterM" type="number" step="0.001" min="0.8" max="1.0" placeholder="Default: 0.915"></label>
+        <label>Encoder PPR<input data-field="encoderPpr" type="number" min="100" max="4096" placeholder="Default: 100"></label>
+        <label>Spatial Interval (mm)<input data-field="spatialIntervalMm" type="number" min="100" max="500" placeholder="Default: 250"></label>
+        <label>Trigger Start Speed (km/h)<input data-field="triggerStartSpeedKmph" type="number" step="0.1" min="10.0" max="40.0" placeholder="Default: 20.0"></label>
       </div>
 
       <div class="button-row" style="margin-top: 18px;">
