@@ -1321,16 +1321,26 @@ async function loadCalibration(gatewayId) {
 
 async function saveCalibration(gatewayId) {
   const card = cardFor(gatewayId);
-  const output = card?.querySelector('[data-role="calOutput"]');
-
-  // Validate ranges
+  const output = card?.querySelector('[data-role="calOutput"]');    // Validate ranges and decimals
   if (card) {
     const inputs = card.querySelectorAll('input[type="number"]');
     for (const input of inputs) {
-      if (input.value !== '' && !input.checkValidity()) {
-        alert(`Invalid value. Please enter a value between ${input.min} and ${input.max}.`);
-        input.focus();
-        return;
+      if (input.value !== '') {
+        if (!input.checkValidity()) {
+          alert(`Invalid value. Please enter a value between ${input.min} and ${input.max}.`);
+          input.focus();
+          return;
+        }
+        if (input.dataset.field === 'triggerStartSpeedKmph' && !input.value.includes('.')) {
+          alert(`Trigger Start Speed must be a decimal value (e.g., 20.0 instead of 20).`);
+          input.focus();
+          return;
+        }
+        if (input.dataset.field === 'wheelDiameterM' && !input.value.includes('.')) {
+          alert(`Wheel Diameter must be a decimal value (e.g., 0.915 instead of 1).`);
+          input.focus();
+          return;
+        }
       }
     }
   }
