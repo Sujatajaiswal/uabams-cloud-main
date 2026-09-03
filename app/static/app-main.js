@@ -1292,10 +1292,10 @@ function setCalibrationValues(gatewayId, data) {
   if (field(card, 'imuGyroZ')) field(card, 'imuGyroZ').value = bogie.imu_gyro_offset_z ?? '';
 
   // 3. Encoder Settings
-  if (field(card, 'wheelDiameterM')) field(card, 'wheelDiameterM').value = encoder.wheel_diameter_m || 0.915;
+  if (field(card, 'wheelDiameterM')) field(card, 'wheelDiameterM').value = Number(encoder.wheel_diameter_m || 0.915).toFixed(3);
   if (field(card, 'encoderPpr')) field(card, 'encoderPpr').value = encoder.encoder_ppr || 100;
   if (field(card, 'spatialIntervalMm')) field(card, 'spatialIntervalMm').value = encoder.spatial_interval_mm || 250;
-  if (field(card, 'triggerStartSpeedKmph')) field(card, 'triggerStartSpeedKmph').value = encoder.trigger_start_speed_kmph || 20.0;
+  if (field(card, 'triggerStartSpeedKmph')) field(card, 'triggerStartSpeedKmph').value = Number(encoder.trigger_start_speed_kmph || 20.0).toFixed(1);
 }
 
 async function loadCalibration(gatewayId) {
@@ -1305,7 +1305,10 @@ async function loadCalibration(gatewayId) {
   try {
     const data = await requestJson(`/api/v1/calibration/${encodeURIComponent(gatewayId)}`);
     setCalibrationValues(gatewayId, data);
-    if (output) output.textContent = JSON.stringify(data, null, 2);
+      let outStr = JSON.stringify(data, null, 2);
+      outStr = outStr.replace(/"trigger_start_speed_kmph":\s*(\d+)(?![\.\d])/g, '"trigger_start_speed_kmph": $1.0');
+      outStr = outStr.replace(/"wheel_diameter_m":\s*(\d+)(?![\.\d])/g, '"wheel_diameter_m": $1.0');
+      if (output) output.textContent = outStr;
     const status = card?.querySelector('[data-role="calStatus"]');
     if (status) {
       status.textContent = 'Loaded';
