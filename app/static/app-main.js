@@ -1384,7 +1384,10 @@ async function saveCalibration(gatewayId) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (output) output.textContent = JSON.stringify(data, null, 2);
+          let outStr = JSON.stringify(data, null, 2);
+      outStr = outStr.replace(/"trigger_start_speed_kmph":\s*(\d+)(?![\.\d])/g, '"trigger_start_speed_kmph": $1.0');
+      outStr = outStr.replace(/"wheel_diameter_m":\s*(\d+)(?![\.\d])/g, '"wheel_diameter_m": $1.0');
+      if (output) output.textContent = outStr;
     const status = card?.querySelector('[data-role="calStatus"]');
     if (status) {
       const cmd = data.command;
