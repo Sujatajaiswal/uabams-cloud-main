@@ -472,7 +472,6 @@ function syncCalibrationGateway() {
   document.querySelectorAll('.calibration-card').forEach((card) => {
     card.classList.toggle('hidden', !visibleIds.includes(card.dataset.gateway));
   });
-  setText('loadAllCalibrationBtn', selectedGatewayValue() ? 'Load Selected' : 'Load All');
 }
 
 function renderDashboard(data) {
@@ -1318,11 +1317,7 @@ async function loadCalibration(gatewayId) {
   }
 }
 
-async function loadAllCalibration() {
-  for (const gatewayId of visibleGatewayIds()) {
-    await loadCalibration(gatewayId);
-  }
-}
+
 
 async function saveCalibration(gatewayId) {
   const card = cardFor(gatewayId);
@@ -1564,7 +1559,6 @@ function boot() {
   $('trainNo')?.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') loadDashboard();
   });
-  $('loadAllCalibrationBtn')?.addEventListener('click', loadAllCalibration);
   $('resetBtn')?.addEventListener('click', resetSession);
   $('cleanupBtn')?.addEventListener('click', cleanupData);
   $('loadLogsBtn')?.addEventListener('click', loadLogs);
