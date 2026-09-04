@@ -768,6 +768,27 @@ async def startup() -> None:
                     );
 
                     -- ── Upload lease tracking ─────────────────────────────────
+                    CREATE TABLE IF NOT EXISTS upload_leases (
+                        upload_id          VARCHAR(50)  PRIMARY KEY,
+                        gateway_id         VARCHAR(100) NOT NULL,
+                        train_id           VARCHAR(50)  NOT NULL,
+                        logical_gateway_id VARCHAR(100),
+                        session_name       VARCHAR(100) NOT NULL,
+                        zip_file_name      VARCHAR(255) NOT NULL,
+                        sha256             VARCHAR(64)  NOT NULL,
+                        size_bytes         BIGINT,
+                        remote_temp_path   VARCHAR(512) NOT NULL,
+                        remote_final_path  VARCHAR(512) NOT NULL,
+                        status             VARCHAR(50)  DEFAULT 'ready',
+                        expires_utc        TIMESTAMP WITH TIME ZONE NOT NULL,
+                        created_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    );
+                    ALTER TABLE upload_leases ADD COLUMN IF NOT EXISTS size_bytes BIGINT;
+                    ALTER TABLE upload_leases ADD COLUMN IF NOT EXISTS sha256 VARCHAR(64);
+                    ALTER TABLE upload_leases ADD COLUMN IF NOT EXISTS remote_temp_path VARCHAR(512);
+                    ALTER TABLE upload_leases ADD COLUMN IF NOT EXISTS remote_final_path VARCHAR(512);
+
+                    -- Migration 004: add logical_gateway_id to all telemetry tables
                     ALTER TABLE heartbeat_logs    ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
                     ALTER TABLE rms_records       ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
                     ALTER TABLE peak_records      ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
@@ -777,33 +798,15 @@ async def startup() -> None:
                     ALTER TABLE time_domain_files ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
                     ALTER TABLE upload_leases     ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
 
-                    CREATE TABLE IF NOT EXISTS upload_leases (
-                        upload_id         VARCHAR(50)  PRIMARY KEY,
-                        gateway_id        VARCHAR(100) NOT NULL,
-                        train_id          VARCHAR(50)  NOT NULL,
-                        session_name      VARCHAR(100) NOT NULL,
-                        zip_file_name     VARCHAR(255) NOT NULL,
-                        sha256            VARCHAR(64)  NOT NULL,
-                        size_bytes        BIGINT,
-                        remote_temp_path  VARCHAR(512) NOT NULL,
-                        remote_final_path VARCHAR(512) NOT NULL,
-                        status            VARCHAR(50)  DEFAULT 'ready',
-                        expires_utc       TIMESTAMP WITH TIME ZONE NOT NULL,
-                        created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                    );
-                    ALTER TABLE upload_leases ADD COLUMN IF NOT EXISTS size_bytes BIGINT;
-                    ALTER TABLE upload_leases ADD COLUMN IF NOT EXISTS sha256 VARCHAR(64);
-                    ALTER TABLE upload_leases ADD COLUMN IF NOT EXISTS remote_temp_path VARCHAR(512);
-                    ALTER TABLE upload_leases ADD COLUMN IF NOT EXISTS remote_final_path VARCHAR(512);
-
                     -- ── Heartbeat logs ────────────────────────────────────────
                     CREATE TABLE IF NOT EXISTS heartbeat_logs (
-                        id             SERIAL PRIMARY KEY,
-                        gateway_id     VARCHAR(100),
-                        train_id       VARCHAR(50),
-                        received_at    TIMESTAMP WITH TIME ZONE,
-                        adxl_state     VARCHAR(50),
-                        encoder_state  VARCHAR(50)
+                        id                 SERIAL PRIMARY KEY,
+                        gateway_id         VARCHAR(100),
+                        train_id           VARCHAR(50),
+                        logical_gateway_id VARCHAR(100),
+                        received_at        TIMESTAMP WITH TIME ZONE,
+                        adxl_state         VARCHAR(50),
+                        encoder_state      VARCHAR(50)
                     );
 
                     -- ── Gateway Commands (reset / calibration_update) ──────────

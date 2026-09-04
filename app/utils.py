@@ -243,20 +243,7 @@ def apply_wheel_compensation(
         "applied": abs(combined_factor - 1.0) > 1e-9,
     }
 
-async def mark_gateway_online(gateway_id: str, now: datetime) -> None:
-    await db.pg_pool.execute(
-        "UPDATE gateways SET last_seen = $1, status = 'active' WHERE gateway_id = $2",
-        now, gateway_id
-    )
-    await db.pg_pool.execute(
-        "UPDATE gateway_status SET online = TRUE, last_heartbeat = $1 WHERE gateway_id = $2",
-        now, gateway_id
-    )
-    await db.pg_pool.execute(
-        "UPDATE gateway_status SET online = TRUE, last_heartbeat = $1, train_id = COALESCE(train_id, $2) WHERE gateway_id = $3",
-        now, train_id, gateway_id
-    )
-    
+
 def canonical_json_bytes(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
 
