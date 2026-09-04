@@ -1031,6 +1031,11 @@ async def startup() -> None:
                         UNIQUE(division_id, code)
                     );
                     
+                    INSERT INTO trains (train_no, train_name) VALUES 
+                        ('22151', 'Bengaluru - Hyderabad Express (Up)'),
+                        ('22152', 'Hyderabad - Bengaluru Express (Down)')
+                    ON CONFLICT (train_no) DO NOTHING;
+
                     INSERT INTO zones (code, name) VALUES ('NCR', 'North Central Railway (NCR)') ON CONFLICT (code) DO NOTHING;
                     INSERT INTO zones (code, name) VALUES ('SR', 'Southern Railway (SR)') ON CONFLICT (code) DO NOTHING;
                     
