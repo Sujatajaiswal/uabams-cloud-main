@@ -470,18 +470,38 @@ async def startup() -> None:
 
                     -- ── Gateway auth & status ─────────────────────────────────
                     CREATE TABLE IF NOT EXISTS gateway_auth (
-                        gateway_id         VARCHAR(100)  NOT NULL,
-                        train_id           VARCHAR(50)   NOT NULL,
-                        secret_key         VARCHAR(255)  NOT NULL,
-                        cert_fingerprint   VARCHAR(64),
-                        ssh_public_key     VARCHAR(1024),
-                        upload_enabled     BOOLEAN DEFAULT TRUE,
-                        upload_base_path   VARCHAR(512),
-                        last_authenticated TIMESTAMP WITH TIME ZONE,
-                        revoked_at         TIMESTAMP WITH TIME ZONE,
-                        created_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                        PRIMARY KEY (gateway_id, train_id)
+                        gateway_id       VARCHAR(100),
+                        train_id         VARCHAR(50),
+                        secret_key       VARCHAR(255),
+                        cert_fingerprint VARCHAR(255),
+                        ssh_public_key   TEXT,
+                        PRIMARY KEY (gateway_id)
                     );
+                    ALTER TABLE gateway_auth DROP CONSTRAINT IF EXISTS gateway_auth_pkey CASCADE;
+                    ALTER TABLE gateway_auth ALTER COLUMN train_id DROP NOT NULL;
+                    DO $$ BEGIN
+                        ALTER TABLE gateway_auth ADD CONSTRAINT gateway_auth_pkey PRIMARY KEY (gateway_id);
+                    EXCEPTION WHEN OTHERS THEN
+                        NULL;
+                    END $$;
+                    ALTER TABLE gateway_auth ADD COLUMN IF NOT EXISTS train_id_dir_a VARCHAR(50);
+                    ALTER TABLE gateway_auth ADD COLUMN IF NOT EXISTS train_id_dir_b VARCHAR(50);
+                    ALTER TABLE gateway_auth ADD COLUMN IF NOT EXISTS logical_gateway_id_dir_a VARCHAR(100);
+                    ALTER TABLE gateway_auth ADD COLUMN IF NOT EXISTS logical_gateway_id_dir_b VARCHAR(100);
+
+                    CREATE TABLE IF NOT EXISTS gateway_train_assignments (
+                        id                 SERIAL PRIMARY KEY,
+                        gateway_id         VARCHAR(100) NOT NULL REFERENCES gateways(gateway_id) ON DELETE CASCADE,
+                        train_id           VARCHAR(50)  NOT NULL,
+                        logical_gateway_id VARCHAR(100),
+                        direction          CHAR(1),
+                        assigned_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        assigned_by        VARCHAR(100),
+                        is_active          BOOLEAN DEFAULT true,
+                        UNIQUE (gateway_id, train_id)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_gta_gateway ON gateway_train_assignments(gateway_id);
+                    CREATE INDEX IF NOT EXISTS idx_gta_train   ON gateway_train_assignments(train_id);
 
                     CREATE TABLE IF NOT EXISTS gateway_status (
                         gateway_id          VARCHAR(100) PRIMARY KEY,
@@ -748,6 +768,15 @@ async def startup() -> None:
                     );
 
                     -- ── Upload lease tracking ─────────────────────────────────
+                    ALTER TABLE heartbeat_logs    ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    ALTER TABLE rms_records       ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    ALTER TABLE peak_records      ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    ALTER TABLE fault_records     ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    ALTER TABLE archives          ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    ALTER TABLE alert_events      ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    ALTER TABLE time_domain_files ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    ALTER TABLE upload_leases     ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+
                     CREATE TABLE IF NOT EXISTS upload_leases (
                         upload_id         VARCHAR(50)  PRIMARY KEY,
                         gateway_id        VARCHAR(100) NOT NULL,
@@ -814,6 +843,10 @@ async def startup() -> None:
                     ALTER TABLE gateways ADD COLUMN IF NOT EXISTS updated_at       TIMESTAMP WITH TIME ZONE;
                     ALTER TABLE gateways ADD COLUMN IF NOT EXISTS created_at       TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
                     ALTER TABLE gateways ADD COLUMN IF NOT EXISTS provision_status VARCHAR(20) DEFAULT 'active';
+                    ALTER TABLE gateways ALTER COLUMN train_id DROP NOT NULL;
+                    ALTER TABLE gateways DROP CONSTRAINT IF EXISTS fk_gateways_train;
+                    ALTER TABLE gateways ADD COLUMN IF NOT EXISTS last_train_id_a VARCHAR(50);
+                    ALTER TABLE gateways ADD COLUMN IF NOT EXISTS last_train_id_b VARCHAR(50);
 
                     ALTER TABLE gateway_auth ADD COLUMN IF NOT EXISTS cert_fingerprint   VARCHAR(64);
                     ALTER TABLE gateway_auth ADD COLUMN IF NOT EXISTS train_id            VARCHAR(50);
@@ -822,9 +855,12 @@ async def startup() -> None:
                     ALTER TABLE gateway_auth ADD COLUMN IF NOT EXISTS upload_enabled      BOOLEAN DEFAULT TRUE;
                     ALTER TABLE gateway_auth ADD COLUMN IF NOT EXISTS upload_base_path    VARCHAR(512);
                     ALTER TABLE gateway_auth ADD COLUMN IF NOT EXISTS revoked_at          TIMESTAMP WITH TIME ZONE;
-                    UPDATE gateway_auth SET train_id = '019456' WHERE train_id IS NULL;
                     ALTER TABLE gateway_auth DROP CONSTRAINT IF EXISTS gateway_auth_pkey;
-                    ALTER TABLE gateway_auth ADD CONSTRAINT gateway_auth_pkey PRIMARY KEY (gateway_id, train_id);
+                    ALTER TABLE gateway_auth ALTER COLUMN train_id DROP NOT NULL;
+                    DO $$ BEGIN
+                        ALTER TABLE gateway_auth ADD CONSTRAINT gateway_auth_pkey PRIMARY KEY (gateway_id);
+                    EXCEPTION WHEN OTHERS THEN NULL;
+                    END $$;
 
                     ALTER TABLE gateway_status ADD COLUMN IF NOT EXISTS train_id       VARCHAR(50);
                     ALTER TABLE gateway_status ADD COLUMN IF NOT EXISTS online         BOOLEAN DEFAULT FALSE;
@@ -1033,10 +1069,7 @@ async def startup() -> None:
                 # idempotent (safe to re-run on every container start).
                 # NOT VALID = enforced on new rows; existing rows not checked.
                 _fk_statements = [
-                    ("fk_gateways_train",
-                     "ALTER TABLE gateways ADD CONSTRAINT fk_gateways_train "
-                     "FOREIGN KEY (train_id) REFERENCES trains(train_no) "
-                     "ON DELETE SET NULL NOT VALID"),
+
                     ("fk_gateway_auth_gateway",
                      "ALTER TABLE gateway_auth ADD CONSTRAINT fk_gateway_auth_gateway "
                      "FOREIGN KEY (gateway_id) REFERENCES gateways(gateway_id) "

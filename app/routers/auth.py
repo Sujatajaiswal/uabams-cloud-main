@@ -83,24 +83,25 @@ async def handshake(data: HandshakeRequest, request: Request):
             if other_auth and other_auth["gateway_id"] != gateway_id:
                 raise HTTPException(status_code=400, detail="SSH public key is already associated with another gateway")
 
+        # 1. Update gateways table without train_id
         await db.pg_pool.execute(
             """
-            INSERT INTO gateways (gateway_id, train_id, gateway_serial, firmware_version, status, last_seen, updated_at, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO gateways (gateway_id, gateway_serial, firmware_version, status, last_seen, updated_at, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (gateway_id) DO UPDATE SET
-                train_id = EXCLUDED.train_id,
                 gateway_serial = EXCLUDED.gateway_serial,
                 firmware_version = EXCLUDED.firmware_version,
                 status = EXCLUDED.status,
                 last_seen = EXCLUDED.last_seen,
                 updated_at = EXCLUDED.updated_at
             """,
-            gateway_id, data.trainId, data.gatewaySerial, data.firmwareVersion, "active", now, now, now
+            gateway_id, data.gatewaySerial, data.firmwareVersion, "active", now, now, now
         )
 
+        # 2. Look up existing API key for this gateway_id
         auth_doc = await db.pg_pool.fetchrow(
-            "SELECT secret_key AS \"apiKey\" FROM gateway_auth WHERE gateway_id = $1 AND train_id = $2",
-            gateway_id, data.trainId
+            'SELECT secret_key AS "apiKey" FROM gateway_auth WHERE gateway_id = $1',
+            gateway_id
         )
         api_key = None
         if auth_doc:
@@ -109,32 +110,69 @@ async def handshake(data: HandshakeRequest, request: Request):
             api_key = token_hex(32)
 
         ssh_pub_key = data.sshPublicKey.strip() if data.sshPublicKey else None
-        upload_base_path = f"/incoming/{data.trainId}/{gateway_id}" if data.sshPublicKey else None
-        upload_enabled = True if data.sshPublicKey else False
+        upload_base_path = f"/incoming/{gateway_id}/"
+        upload_enabled = True
 
+        # 3. Upsert gateway_auth keyed on gateway_id alone
         await db.pg_pool.execute(
             """
-            INSERT INTO gateway_auth (gateway_id, train_id, secret_key, cert_fingerprint, ssh_public_key, upload_enabled, upload_base_path, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            ON CONFLICT (gateway_id, train_id) DO UPDATE SET
+            INSERT INTO gateway_auth (
+                gateway_id, secret_key, cert_fingerprint, ssh_public_key, 
+                upload_enabled, upload_base_path, created_at,
+                train_id_dir_a, logical_gateway_id_dir_a,
+                train_id_dir_b, logical_gateway_id_dir_b
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (gateway_id) DO UPDATE SET
                 secret_key = EXCLUDED.secret_key,
                 cert_fingerprint = EXCLUDED.cert_fingerprint,
                 ssh_public_key = COALESCE(EXCLUDED.ssh_public_key, gateway_auth.ssh_public_key),
                 upload_enabled = COALESCE(EXCLUDED.upload_enabled, gateway_auth.upload_enabled),
-                upload_base_path = COALESCE(EXCLUDED.upload_base_path, gateway_auth.upload_base_path)
+                upload_base_path = COALESCE(EXCLUDED.upload_base_path, gateway_auth.upload_base_path),
+                train_id_dir_a = COALESCE(EXCLUDED.train_id_dir_a, gateway_auth.train_id_dir_a),
+                logical_gateway_id_dir_a = COALESCE(EXCLUDED.logical_gateway_id_dir_a, gateway_auth.logical_gateway_id_dir_a),
+                train_id_dir_b = COALESCE(EXCLUDED.train_id_dir_b, gateway_auth.train_id_dir_b),
+                logical_gateway_id_dir_b = COALESCE(EXCLUDED.logical_gateway_id_dir_b, gateway_auth.logical_gateway_id_dir_b)
             """,
-            gateway_id, data.trainId, api_key, cert_fingerprint, ssh_pub_key, upload_enabled, upload_base_path, now
+            gateway_id, api_key, cert_fingerprint, ssh_pub_key, upload_enabled, upload_base_path, now,
+            data.trainIdDirA, data.logicalGatewayIdDirA, data.trainIdDirB, data.logicalGatewayIdDirB
         )
+
+        # 4. Insert rows into gateway_train_assignments if provided
+        if data.trainIdDirA:
+            await db.pg_pool.execute(
+                """
+                INSERT INTO gateway_train_assignments (gateway_id, train_id, logical_gateway_id, direction, assigned_by, is_active)
+                VALUES ($1, $2, $3, 'A', 'gateway_handshake', true)
+                ON CONFLICT (gateway_id, train_id) DO UPDATE SET
+                    logical_gateway_id = EXCLUDED.logical_gateway_id,
+                    direction = 'A',
+                    is_active = true
+                """,
+                gateway_id, data.trainIdDirA, data.logicalGatewayIdDirA
+            )
+
+        if data.trainIdDirB:
+            await db.pg_pool.execute(
+                """
+                INSERT INTO gateway_train_assignments (gateway_id, train_id, logical_gateway_id, direction, assigned_by, is_active)
+                VALUES ($1, $2, $3, 'B', 'gateway_handshake', true)
+                ON CONFLICT (gateway_id, train_id) DO UPDATE SET
+                    logical_gateway_id = EXCLUDED.logical_gateway_id,
+                    direction = 'B',
+                    is_active = true
+                """,
+                gateway_id, data.trainIdDirB, data.logicalGatewayIdDirB
+            )
         
         await db.pg_pool.execute(
             """
-            INSERT INTO gateway_status (gateway_id, train_id, last_handshake)
-            VALUES ($1, $2, $3)
+            INSERT INTO gateway_status (gateway_id, last_handshake)
+            VALUES ($1, $2)
             ON CONFLICT (gateway_id) DO UPDATE SET
-                train_id = EXCLUDED.train_id,
                 last_handshake = EXCLUDED.last_handshake
             """,
-            gateway_id, data.trainId, now
+            gateway_id, now
         )
 
         upload_config = {
@@ -142,7 +180,7 @@ async def handshake(data: HandshakeRequest, request: Request):
             "host": settings["ssh_host"],
             "port": settings["ssh_port"],
             "user": settings["ssh_user"],
-            "basePath": f"/incoming/{data.trainId}/{gateway_id}",
+            "basePath": f"/incoming/{gateway_id}/",
             "sshHostKey": settings["ssh_host_key"]
         }
 
@@ -288,20 +326,20 @@ async def authenticate(data: AuthRequest):
     if not session:
         raise HTTPException(status_code=404, detail="Handshake session not found or expired")
 
-    # 2. Look up compound gateway_auth by both gatewayId and trainId
+        # 2. Look up gateway_auth by gatewayId
     auth_doc = await db.pg_pool.fetchrow(
-        "SELECT secret_key AS \"apiKey\", cert_fingerprint AS \"certFingerprint\" FROM gateway_auth WHERE gateway_id = $1 AND train_id = $2",
-        gateway_id, train_id
+        "SELECT secret_key AS \"apiKey\", cert_fingerprint AS \"certFingerprint\" FROM gateway_auth WHERE gateway_id = $1",
+        gateway_id
     )
     if not auth_doc:
-        return {"status": "failed", "message": f"Gateway {gateway_id} on Train {train_id} not registered"}
+        return {"status": "failed", "message": f"Gateway {gateway_id} not registered"}
 
     stored_key = auth_doc.get("apiKey")
     if stored_key != data.apiKey:
         return {"status": "failed", "message": "Invalid API Key"}
 
     # 3. Generate token and update session to authenticated
-    token = create_gateway_token(gateway_id, train_id)
+    token = create_gateway_token(gateway_id)
     
     await db.pg_pool.execute(
         """
@@ -321,9 +359,9 @@ async def authenticate(data: AuthRequest):
         """
         UPDATE gateway_auth 
         SET last_authenticated = $1, cert_fingerprint = $2 
-        WHERE gateway_id = $3 AND train_id = $4
+        WHERE gateway_id = $3
         """,
-        utc_now(), fingerprint, gateway_id, train_id
+        utc_now(), fingerprint, gateway_id
     )
 
     return {

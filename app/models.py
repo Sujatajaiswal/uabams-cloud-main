@@ -6,7 +6,11 @@ from pydantic import BaseModel, Field
 
 class HandshakeRequest(BaseModel):
     gatewayId: str = Field(..., examples=["GW1"])
-    trainId: str = Field(..., examples=["12345"])
+    trainId: str | None = Field(None, examples=["12345"])
+    trainIdDirA: str | None = Field(None)
+    logicalGatewayIdDirA: str | None = Field(None)
+    trainIdDirB: str | None = Field(None)
+    logicalGatewayIdDirB: str | None = Field(None)
     gatewaySerial: str = Field(..., examples=["SN001"])
     firmwareVersion: str = Field(..., examples=["1.0"])
     clientCertPem: str | None = Field(default=None, description="Optional PEM encoded X.509 client certificate for PKI auto-provisioning")
@@ -15,6 +19,7 @@ class HandshakeRequest(BaseModel):
 
 class UploadLeaseRequest(BaseModel):
     gatewayId: str = Field(..., examples=["GW1_20693_BOGIE_01"])
+    logicalGatewayId: str | None = Field(None, examples=["GW1_22151_BOGIE_01"])
     trainId: str = Field(..., examples=["20693"])
     sessionName: str = Field(..., examples=["SESSION_20260727_103000000"])
     zipFileName: str = Field(..., examples=["GW1_20693_BOGIE_01__20693__SESSION_20260727_103000000.zip"])
@@ -24,6 +29,7 @@ class UploadLeaseRequest(BaseModel):
 
 class UploadCompleteRequest(BaseModel):
     gatewayId: str | None = Field(None, examples=["GW1_20693_BOGIE_01"])
+    logicalGatewayId: str | None = Field(None, examples=["GW1_22151_BOGIE_01"])
     trainId: str = Field(..., examples=["20693"])
     uploadId: str = Field(..., examples=["b8bc2cf7-3d91-4d3d-8321-5e1d46e6f001"])
     sessionName: str | None = Field(None, examples=["SESSION_20260727_103000000"])
@@ -33,7 +39,7 @@ class UploadCompleteRequest(BaseModel):
 
 class AuthRequest(BaseModel):
     gatewayId: str = Field(..., examples=["GW1"])
-    trainId: str = Field(..., examples=["019456"])
+    trainId: str | None = Field(None, examples=["019456"])
     apiKey: str = Field(..., examples=["123456"])
     sessionId: str = Field(..., examples=["sessionId"])
 
@@ -49,6 +55,8 @@ class CommandResultItem(BaseModel):
 
 class HeartbeatRequest(BaseModel):
     gatewayId: str = Field(..., examples=["GW1"])
+    logicalGatewayId: str | None = Field(None, examples=["GW1_22151_BOGIE_01"])
+    trainId: str | None = Field(None, examples=["22151"])
     gatewaySerial: str | None = Field(None, examples=["UABAMS_PIL_01"])
     timestamp: datetime | None = None
     token: str | None = Field(None, examples=["jwt_token"])
@@ -80,6 +88,7 @@ class CalibrationUpdateRequest(BaseModel):
 
 class AlertRequest(BaseModel):
     gatewayId: str | None = None
+    logicalGatewayId: str | None = None
     trainNo: str | None = None
     latitude: float
     longitude: float

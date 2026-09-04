@@ -50,7 +50,7 @@ async def async_gateway_id_for_key(api_key: str | None) -> str | None:
         if db.pg_pool:
             row = await db.pg_pool.fetchrow("SELECT gateway_id FROM gateway_auth WHERE secret_key = $1", api_key_clean)
             if row:
-                return normalize_gateway_id(row['gateway_id'])
+                return row['gateway_id']
     except Exception as e:
         print(f"Error querying gateway_auth table for API key: {e}")
         
@@ -86,6 +86,7 @@ class GatewayAuthMiddleware(BaseHTTPMiddleware):
 
                 request.state.gateway_id = gateway_id
                 request.state.train_id = train_id
+                request.state.logical_gateway_id = request.headers.get("X-Logical-Gateway-Id")
                 request.state.api_key = api_key
             else:
                 from app.database import db
@@ -102,16 +103,14 @@ class GatewayAuthMiddleware(BaseHTTPMiddleware):
                 gateway_id = normalize_gateway_id(session["gateway_id"])
                 request.state.gateway_id = gateway_id
                 request.state.train_id = train_id
+                request.state.logical_gateway_id = request.headers.get("X-Logical-Gateway-Id")
                 request.state.session_id = session_id
                 request.state.session_key = bytes.fromhex(session["session_key_hex"])
 
-            if supplied_gateway_id:
-                norm_supplied = normalize_gateway_id(supplied_gateway_id)
-                norm_resolved = normalize_gateway_id(gateway_id)
-                if norm_supplied != norm_resolved:
-                    return JSONResponse(
-                        status_code=403,
-                        content={"detail": "API key or session does not belong to supplied gateway"},
-                    )
+            # Once the key resolves to a physical gateway_id, the request is authorized.
+            # Dynamic logical gateway IDs passed in headers or body must not be rejected.
+            if supplied_gateway_id and supplied_gateway_id != gateway_id:
+                if not request.state.logical_gateway_id and ("BOGIE" in supplied_gateway_id or "_" in supplied_gateway_id):
+                    request.state.logical_gateway_id = supplied_gateway_id
 
         return await call_next(request)

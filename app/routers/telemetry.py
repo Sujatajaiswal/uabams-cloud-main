@@ -65,27 +65,21 @@ router = APIRouter()
 
 TIME_DOMAIN_DIR = os.environ.get("TIME_DOMAIN_DIR", "/app/time_domain")
 
-async def mark_gateway_online(gateway_id: str, train_id: str, now: datetime) -> None:
+async def mark_gateway_online(gateway_id: str, now: datetime) -> None:
     await db.pg_pool.execute("""
-        INSERT INTO gateways (gateway_id, train_id, status, last_seen, updated_at, created_at)
-        VALUES ($1, $2, 'active', $3, $3, $3)
+        INSERT INTO gateways (gateway_id, status, last_seen, updated_at, created_at)
+        VALUES ($1, 'active', $2, $2, $2)
         ON CONFLICT (gateway_id) DO UPDATE SET
-            train_id = EXCLUDED.train_id, status = 'active',
+            status = 'active',
             last_seen = EXCLUDED.last_seen, updated_at = EXCLUDED.updated_at
-    """, gateway_id, train_id, now)
+    """, gateway_id, now)
 
     await db.pg_pool.execute("""
-        INSERT INTO trains (train_no, train_name, created_at)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (train_no) DO NOTHING
-    """, train_id, train_id, now)
-
-    await db.pg_pool.execute("""
-        INSERT INTO gateway_status (gateway_id, train_id, online, last_heartbeat)
-        VALUES ($1, $2, TRUE, $3)
+        INSERT INTO gateway_status (gateway_id, online, last_heartbeat)
+        VALUES ($1, TRUE, $2)
         ON CONFLICT (gateway_id) DO UPDATE SET
-            train_id = EXCLUDED.train_id, online = TRUE, last_heartbeat = EXCLUDED.last_heartbeat
-    """, gateway_id, train_id, now)
+            online = TRUE, last_heartbeat = EXCLUDED.last_heartbeat
+    """, gateway_id, now)
 
 async def store_time_domain_files(
     archive_source: bytes | str,
@@ -95,6 +89,7 @@ async def store_time_domain_files(
     session_name: str,
     archive_sha256: str,
     created_at: datetime,
+    logical_gateway_id: str | None = None,
 ) -> list[dict[str, Any]]:
     import shutil
     import zipfile
@@ -134,10 +129,10 @@ async def store_time_domain_files(
             await db.pg_pool.execute(
                 """
                 INSERT INTO time_domain_files 
-                (gateway_id, train_id, session_name, archive_sha256, filename, path, size_bytes, sha256, chunk_count, created_at, expires_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10)
+                (gateway_id, train_id, logical_gateway_id, session_name, archive_sha256, filename, path, size_bytes, sha256, chunk_count, created_at, expires_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $10, $11)
                 """,
-                gateway_id, train_id, session_name, archive_sha256, safe_filename, fs_path, file_size, file_sha256, created_at, expires_at
+                gateway_id, train_id, logical_gateway_id, session_name, archive_sha256, safe_filename, fs_path, file_size, file_sha256, created_at, expires_at
             )
 
             stored_files.append({
@@ -155,6 +150,7 @@ async def process_and_ingest_archive(
     train_id: str,
     source: bytes | str,
     actual_sha256: str,
+    logical_gateway_id: str | None = None,
     content_type: str = "application/zip"
 ) -> dict[str, Any]:
     try:
@@ -181,7 +177,7 @@ async def process_and_ingest_archive(
         rms_data = []
         for r in parsed.rms_records:
             rms_data.append((
-                resolved_train_id, gateway_id, session_name, actual_sha256,
+                resolved_train_id, gateway_id, logical_gateway_id, session_name, actual_sha256,
                 r.get('latitude'), r.get('longitude'), r.get('gpsValid'),
                 r.get('bearing'), r.get('speedKmph'), r.get('positionMm'),
                 json.dumps(r.get('axes', {})),
@@ -192,35 +188,35 @@ async def process_and_ingest_archive(
             ))
         await db.pg_pool.executemany("""
             INSERT INTO rms_records 
-            (train_id, gateway_id, session_name, archive_sha256, latitude, longitude, gps_valid, bearing, speed, position_mm, axes, al_x_g, al_y_g, al_z_g, ar_x_g, ar_y_g, ar_z_g, bg_x_g, bg_y_g, bg_z_g, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+            (train_id, gateway_id, logical_gateway_id, session_name, archive_sha256, latitude, longitude, gps_valid, bearing, speed, position_mm, axes, al_x_g, al_y_g, al_z_g, ar_x_g, ar_y_g, ar_z_g, bg_x_g, bg_y_g, bg_z_g, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
         """, rms_data)
 
     if parsed.peak_records:
         peak_data = []
         for r in parsed.peak_records:
             peak_data.append((
-                resolved_train_id, gateway_id, actual_sha256,
+                resolved_train_id, gateway_id, logical_gateway_id, actual_sha256,
                 r.get('windowStartMm'), r.get('positionMm'), r.get('speedKmph'),
                 r.get('latitude'), r.get('longitude'), json.dumps(r.get('axes', {})), now
             ))
         await db.pg_pool.executemany("""
             INSERT INTO peak_records
-            (train_id, gateway_id, archive_sha256, window_start_mm, position_mm, speed_kmph, latitude, longitude, axes, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            (train_id, gateway_id, logical_gateway_id, archive_sha256, window_start_mm, position_mm, speed_kmph, latitude, longitude, axes, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         """, peak_data)
 
     if parsed.fault_records:
         fault_data = []
         for r in parsed.fault_records:
             fault_data.append((
-                resolved_train_id, gateway_id, actual_sha256,
+                resolved_train_id, gateway_id, logical_gateway_id, actual_sha256,
                 r.get('timestampMs'), r.get('faultCode'), r.get('description'), now
             ))
         await db.pg_pool.executemany("""
             INSERT INTO fault_records
-            (train_id, gateway_id, archive_sha256, timestamp_ms, fault_code, description, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            (train_id, gateway_id, logical_gateway_id, archive_sha256, timestamp_ms, fault_code, description, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         """, fault_data)
 
     peak_alerts = peak_records_to_alert_events(
@@ -230,20 +226,21 @@ async def process_and_ingest_archive(
         alert_data = []
         for r in peak_alerts:
             alert_data.append((
-                resolved_train_id, gateway_id, r.get('alertType'), r.get('latitude'),
-                r.get('longitude'), r.get('positionMm'), session_name, actual_sha256,
+                r.get('trainNo'), r.get('gatewayId'), logical_gateway_id, r.get('alert_type', 'peak'),
+                r.get('latitude'), r.get('longitude'), r.get('positionMm'),
+                r.get('sessionName'), r.get('archiveSha256'),
                 r.get('source'), r.get('peakAxis'), r.get('peakValueG'), r.get('speedKmph'),
                 r.get('alert'), r.get('sessionStatus', 'active'), r.get('zone'),
                 r.get('division'), r.get('section'), r.get('archivedAt'), now
             ))
         await db.pg_pool.executemany("""
             INSERT INTO alert_events
-            (train_no, gateway_id, alert_type, latitude, longitude, position_mm, session_name, archive_sha256, source, peak_axis, peak_value_g, speed_kmph, alert, session_status, zone, division, section, archived_at, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+            (train_no, gateway_id, logical_gateway_id, alert_type, latitude, longitude, position_mm, session_name, archive_sha256, source, peak_axis, peak_value_g, speed_kmph, alert, session_status, zone, division, section, archived_at, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
         """, alert_data)
 
     try:
-        stored_raw_files = await store_time_domain_files(source, parsed.raw_files, gateway_id, resolved_train_id, session_name, actual_sha256, now)
+        stored_raw_files = await store_time_domain_files(source, parsed.raw_files, gateway_id, resolved_train_id, session_name, actual_sha256, now, logical_gateway_id)
     except Exception as exc:
         print(f"Warning: Raw time domain storage exception: {exc}")
         stored_raw_files = []
@@ -255,17 +252,17 @@ async def process_and_ingest_archive(
     if existing:
         await db.pg_pool.execute("""
             UPDATE archives SET
-            train_id = $1, session_name = $2, session_status = $3, size_bytes = $4, status = $5, parse_warnings = $6
-            WHERE id = $7
-        """, resolved_train_id, session_name, session_status, size_bytes, status_str, json.dumps(warnings), existing["id"])
+            train_id = $1, logical_gateway_id = $2, session_name = $3, session_status = $4, size_bytes = $5, status = $6, parse_warnings = $7
+            WHERE id = $8
+        """, resolved_train_id, logical_gateway_id, session_name, session_status, size_bytes, status_str, json.dumps(warnings), existing["id"])
     else:
         await db.pg_pool.execute("""
-            INSERT INTO archives (gateway_id, sha256, received_at, train_id, session_name, session_status, size_bytes, status, parse_warnings)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        """, gateway_id, actual_sha256, now, resolved_train_id, session_name, session_status, size_bytes, status_str, json.dumps(warnings))
+            INSERT INTO archives (gateway_id, sha256, received_at, train_id, logical_gateway_id, session_name, session_status, size_bytes, status, parse_warnings)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        """, gateway_id, actual_sha256, now, resolved_train_id, logical_gateway_id, session_name, session_status, size_bytes, status_str, json.dumps(warnings))
 
     try:
-        await mark_gateway_online(gateway_id, resolved_train_id, now)
+        await mark_gateway_online(gateway_id, now)
     except Exception as exc:
         pass
 
@@ -335,16 +332,17 @@ async def heartbeat(
         await db.pg_pool.execute("UPDATE gateway_commands SET status = $1, result = $2::jsonb, completed_at = $3 WHERE command_id = $4 AND gateway_id = $5", result.status, res_json, completed_at, result.commandId, gateway_id)
 
     await db.pg_pool.execute("UPDATE gateways SET last_seen = $1, status = 'active', last_heartbeat = $1 WHERE gateway_id = $2", now, gateway_id)
-    await db.pg_pool.execute("INSERT INTO heartbeat_logs (gateway_id, train_id, received_at, adxl_state, encoder_state) VALUES ($1, $2, $3, $4, $5)", gateway_id, gateway.get("trainId"), now, data.adxlState, data.encoderState)
+    await db.pg_pool.execute("INSERT INTO heartbeat_logs (gateway_id, train_id, logical_gateway_id, received_at, adxl_state, encoder_state) VALUES ($1, $2, $3, $4, $5, $6)", gateway_id, data.trainId, data.logicalGatewayId, now, data.adxlState, data.encoderState)
     await db.pg_pool.execute("""
         INSERT INTO gateway_status (gateway_id, train_id, online, last_heartbeat, adxl_state, adxl_uptime, adxl_faults, adxl_fw_version, adxl_cal_version, encoder_state, encoder_uptime, encoder_faults, encoder_fw_version, encoder_cal_version)
         VALUES ($1, $2, TRUE, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         ON CONFLICT (gateway_id) DO UPDATE SET
-            train_id = EXCLUDED.train_id, online = TRUE, last_heartbeat = EXCLUDED.last_heartbeat,
+            train_id = COALESCE(EXCLUDED.train_id, gateway_status.train_id), online = TRUE, last_heartbeat = EXCLUDED.last_heartbeat,
             adxl_state = EXCLUDED.adxl_state, adxl_uptime = EXCLUDED.adxl_uptime, adxl_faults = EXCLUDED.adxl_faults, adxl_fw_version = EXCLUDED.adxl_fw_version, adxl_cal_version = EXCLUDED.adxl_cal_version,
             encoder_state = EXCLUDED.encoder_state, encoder_uptime = EXCLUDED.encoder_uptime, encoder_faults = EXCLUDED.encoder_faults, encoder_fw_version = EXCLUDED.encoder_fw_version, encoder_cal_version = EXCLUDED.encoder_cal_version
-    """, gateway_id, gateway.get("trainId"), now, data.adxlState, data.adxlUptime, data.adxlFaults, data.adxlFwVersion, data.adxlCalVersion, data.encoderState, data.encoderUptime, data.encoderFaults, data.encoderFwVersion, data.encoderCalVersion)
-    await db.pg_pool.execute("UPDATE trains SET status = 'running', updated_at = $1 WHERE train_no = $2", now, gateway.get("trainId"))
+    """, gateway_id, data.trainId, now, data.adxlState, data.adxlUptime, data.adxlFaults, data.adxlFwVersion, data.adxlCalVersion, data.encoderState, data.encoderUptime, data.encoderFaults, data.encoderFwVersion, data.encoderCalVersion)
+
+
 
     pending_commands = await db.pg_pool.fetch("SELECT command_id AS \"commandId\", type, status, version, payload_url AS \"payloadUrl\", sha256, delivered_at AS \"deliveredAt\", delivery_count AS \"deliveryCount\" FROM gateway_commands WHERE gateway_id = $1 AND status = 'pending' ORDER BY created_at DESC LIMIT 50", gateway_id)
 
@@ -400,6 +398,7 @@ async def upload_archive(
         train_id=request.state.train_id,
         source=archive_body,
         actual_sha256=actual_sha256,
+        logical_gateway_id=request.state.logical_gateway_id,
         content_type=request.headers.get("content-type", "application/zip")
     )
 
@@ -412,29 +411,29 @@ async def create_upload_lease(
 ):
     gateway_id = request.state.gateway_id
     
-    auth_doc = await db.pg_pool.fetchrow("SELECT upload_enabled, revoked_at FROM gateway_auth WHERE gateway_id = $1 AND train_id = $2", gateway_id, data.trainId)
+    auth_doc = await db.pg_pool.fetchrow("SELECT upload_enabled, revoked_at FROM gateway_auth WHERE gateway_id = $1", gateway_id)
     if not auth_doc or not auth_doc.get("upload_enabled", True) or auth_doc.get("revoked_at"):
         raise HTTPException(status_code=403, detail="Secure upload is disabled or revoked for this gateway")
         
     upload_id = str(uuid.uuid4())
     
     base_dir = os.path.abspath(settings["upload_base_dir"])
-    train_dir = os.path.join(base_dir, data.trainId)
-    gateway_dir = os.path.join(train_dir, gateway_id)
+    train_dir = os.path.join(base_dir, gateway_id)
+    gateway_dir = os.path.join(train_dir, data.trainId)
     os.makedirs(gateway_dir, exist_ok=True)
     
     disk_temp_path = os.path.join(gateway_dir, f"{data.zipFileName}.part").replace("\\", "/")
     disk_final_path = os.path.join(gateway_dir, data.zipFileName).replace("\\", "/")
     
-    client_temp_path = f"/incoming/{data.trainId}/{gateway_id}/{data.zipFileName}.part"
-    client_final_path = f"/incoming/{data.trainId}/{gateway_id}/{data.zipFileName}"
+    client_temp_path = f"/incoming/{gateway_id}/{data.trainId}/{data.zipFileName}.part"
+    client_final_path = f"/incoming/{gateway_id}/{data.trainId}/{data.zipFileName}"
     
     expires_utc = utc_now() + timedelta(hours=3)
     
     await db.pg_pool.execute("""
-        INSERT INTO upload_leases (upload_id, gateway_id, train_id, session_name, zip_file_name, sha256, size_bytes, remote_temp_path, remote_final_path, status, expires_utc)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'ready', $10)
-    """, upload_id, gateway_id, data.trainId, data.sessionName, data.zipFileName, data.sha256, data.sizeBytes, disk_temp_path, disk_final_path, expires_utc)
+        INSERT INTO upload_leases (upload_id, gateway_id, train_id, logical_gateway_id, session_name, zip_file_name, sha256, size_bytes, remote_temp_path, remote_final_path, status, expires_utc)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'ready', $11)
+    """, upload_id, gateway_id, data.trainId, data.logicalGatewayId, data.sessionName, data.zipFileName, data.sha256, data.sizeBytes, disk_temp_path, disk_final_path, expires_utc)
     
     return {
         "status": "ready",
@@ -456,7 +455,7 @@ async def complete_upload(
 ):
     gateway_id = request.state.gateway_id
     
-    lease = await db.pg_pool.fetchrow("SELECT remote_temp_path AS \"remoteTempPath\", remote_final_path AS \"remoteFinalPath\", size_bytes AS \"sizeBytes\", sha256, expires_utc AS \"expiresUtc\" FROM upload_leases WHERE upload_id = $1 AND gateway_id = $2", data.uploadId, gateway_id)
+    lease = await db.pg_pool.fetchrow("SELECT remote_temp_path AS \"remoteTempPath\", remote_final_path AS \"remoteFinalPath\", size_bytes AS \"sizeBytes\", sha256, expires_utc AS \"expiresUtc\", logical_gateway_id AS \"logicalGatewayId\" FROM upload_leases WHERE upload_id = $1 AND gateway_id = $2", data.uploadId, gateway_id)
     if not lease:
         raise HTTPException(status_code=404, detail="Upload lease not found or does not belong to this gateway")
 
@@ -497,11 +496,13 @@ async def complete_upload(
     await db.pg_pool.execute("UPDATE upload_leases SET status = 'verified' WHERE upload_id = $1", data.uploadId)
     
     try:
+        effective_logical_id = data.logicalGatewayId or lease.get("logicalGatewayId")
         ingest_res = await process_and_ingest_archive(
             gateway_id=gateway_id,
             train_id=data.trainId,
             source=final_path,
             actual_sha256=actual_sha,
+            logical_gateway_id=effective_logical_id,
             content_type="application/zip"
         )
     except Exception as exc:
@@ -619,8 +620,8 @@ async def create_alert(
         "alert": color,
         "createdAt": now,
     }
-    await db.pg_pool.execute("INSERT INTO alert_events (gateway_id, train_no, latitude, longitude, peak_value_g, alert, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)", gateway_id, train_no, data.latitude, data.longitude, data.peakValueG, color, now)
-    await mark_gateway_online(gateway_id, train_no, now)
+    await db.pg_pool.execute("INSERT INTO alert_events (gateway_id, train_no, logical_gateway_id, latitude, longitude, peak_value_g, alert, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", gateway_id, train_no, data.logicalGatewayId, data.latitude, data.longitude, data.peakValueG, color, now)
+    await mark_gateway_online(gateway_id, now)
     return {"status": "success", "alert": color, "event": serialize(document)}
 
 

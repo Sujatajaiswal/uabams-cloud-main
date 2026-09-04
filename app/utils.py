@@ -139,10 +139,9 @@ def render_login_page(error: str = ""):
 </html>""".replace("{error_html}", error_html)
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
-def create_gateway_token(gateway_id: str, train_id: str | None = None) -> str:
+def create_gateway_token(gateway_id: str) -> str:
     payload = {
         "sub": gateway_id,
-        "trainId": train_id,
         "iat": utc_now(),
         "exp": utc_now() + timedelta(hours=12),
     }
@@ -244,10 +243,14 @@ def apply_wheel_compensation(
         "applied": abs(combined_factor - 1.0) > 1e-9,
     }
 
-async def mark_gateway_online(gateway_id: str, train_id: str, now: datetime) -> None:
+async def mark_gateway_online(gateway_id: str, now: datetime) -> None:
     await db.pg_pool.execute(
-        "UPDATE gateways SET last_seen = $1, status = 'active', train_id = COALESCE(train_id, $2) WHERE gateway_id = $3",
-        now, train_id, gateway_id
+        "UPDATE gateways SET last_seen = $1, status = 'active' WHERE gateway_id = $2",
+        now, gateway_id
+    )
+    await db.pg_pool.execute(
+        "UPDATE gateway_status SET online = TRUE, last_heartbeat = $1 WHERE gateway_id = $2",
+        now, gateway_id
     )
     await db.pg_pool.execute(
         "UPDATE gateway_status SET online = TRUE, last_heartbeat = $1, train_id = COALESCE(train_id, $2) WHERE gateway_id = $3",
