@@ -128,6 +128,9 @@ def render_login_page(error: str = ""):
     </div>
   </div>
   <script>
+    try {
+      localStorage.removeItem('activeTab');
+    } catch (e) {}
     const togglePassword = document.querySelector('#toggle-password');
     const password = document.querySelector('#password');
     togglePassword.addEventListener('click', function () {
