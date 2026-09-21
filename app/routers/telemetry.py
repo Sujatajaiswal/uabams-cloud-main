@@ -58,7 +58,7 @@ from app.utils import (
     resolve_train_id, location_box,
     SPATIAL_RETENTION_DAYS, TIME_DOMAIN_RETENTION_DAYS,
     apply_wheel_compensation, is_operator_authenticated, operator_username, client_ip, 
-    operator_session_payload, 
+    operator_session_payload, send_sms
 )
 
 router = APIRouter()
@@ -115,13 +115,14 @@ async def store_time_domain_files(
             safe_filename = os.path.basename(original_path) or "data.bin"
             fs_path = os.path.join(archive_dir, safe_filename)
 
-            with archive.open(zip_member) as src, open(fs_path, "wb") as dst:
-                shutil.copyfileobj(src, dst)
-
             file_sha256_hash = sha256()
             file_size = 0
-            with open(fs_path, "rb") as f:
-                for chunk in iter(lambda: f.read(4096 * 1024), b""):
+            with archive.open(zip_member) as src, open(fs_path, "wb") as dst:
+                while True:
+                    chunk = src.read(4 * 1024 * 1024)
+                    if not chunk:
+                        break
+                    dst.write(chunk)
                     file_sha256_hash.update(chunk)
                     file_size += len(chunk)
             file_sha256 = file_sha256_hash.hexdigest()
@@ -186,25 +187,34 @@ async def process_and_ingest_archive(
                 r.get('bg_x_g'), r.get('bg_y_g'), r.get('bg_z_g'),
                 now
             ))
-        await db.pg_pool.executemany("""
-            INSERT INTO rms_records 
-            (train_id, gateway_id, logical_gateway_id, session_name, archive_sha256, latitude, longitude, gps_valid, bearing, speed, position_mm, axes, al_x_g, al_y_g, al_z_g, ar_x_g, ar_y_g, ar_z_g, bg_x_g, bg_y_g, bg_z_g, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
-        """, rms_data)
+        rms_cols = [
+            'train_id', 'gateway_id', 'logical_gateway_id', 'session_name', 'archive_sha256',
+            'latitude', 'longitude', 'gps_valid', 'bearing', 'speed', 'position_mm',
+            'axes', 'al_x_g', 'al_y_g', 'al_z_g', 'ar_x_g', 'ar_y_g', 'ar_z_g',
+            'bg_x_g', 'bg_y_g', 'bg_z_g', 'created_at'
+        ]
+        await db.pg_pool.copy_records_to_table('rms_records', records=rms_data, columns=rms_cols)
 
     if parsed.peak_records:
         peak_data = []
         for r in parsed.peak_records:
             peak_data.append((
                 resolved_train_id, gateway_id, logical_gateway_id, actual_sha256,
-                r.get('windowStartMm'), r.get('positionMm'), r.get('speedKmph'),
+                r.get('windowStartMm'), r.get('windowEndMm'), r.get('positionMm'),
+                r.get('startKm'), r.get('endKm'),
+                r.get('speedKmph'), r.get('avgSpeedKmph'), r.get('minSpeedKmph'), r.get('maxSpeedKmph'),
+                r.get('validMask'), r.get('alertGenerated'), r.get('alertsCount'),
                 r.get('latitude'), r.get('longitude'), json.dumps(r.get('axes', {})), now
             ))
-        await db.pg_pool.executemany("""
-            INSERT INTO peak_records
-            (train_id, gateway_id, logical_gateway_id, archive_sha256, window_start_mm, position_mm, speed_kmph, latitude, longitude, axes, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        """, peak_data)
+        peak_cols = [
+            'train_id', 'gateway_id', 'logical_gateway_id', 'archive_sha256',
+            'window_start_mm', 'window_end_mm', 'position_mm',
+            'start_km', 'end_km',
+            'speed_kmph', 'avg_speed_kmph', 'min_speed_kmph', 'max_speed_kmph',
+            'valid_mask', 'alert_generated', 'alerts_count',
+            'latitude', 'longitude', 'axes', 'created_at'
+        ]
+        await db.pg_pool.copy_records_to_table('peak_records', records=peak_data, columns=peak_cols)
 
     if parsed.fault_records:
         fault_data = []
@@ -231,12 +241,16 @@ async def process_and_ingest_archive(
                 r.get('sessionName'), r.get('archiveSha256'),
                 r.get('source'), r.get('peakAxis'), r.get('peakValueG'), r.get('speedKmph'),
                 r.get('alert'), r.get('sessionStatus', 'active'), r.get('zone'),
-                r.get('division'), r.get('section'), r.get('archivedAt'), now
+                r.get('division'), r.get('section'), r.get('archivedAt'), now,
+                r.get('sensor'), r.get('axis'), r.get('channel'), r.get('thresholdG'),
+                r.get('locationKm'), r.get('startKm'), r.get('endKm'),
+                r.get('windowAvgSpeedKmph'), r.get('minSpeedKmph'), r.get('maxSpeedKmph'),
+                r.get('alertsCount')
             ))
         await db.pg_pool.executemany("""
             INSERT INTO alert_events
-            (train_no, gateway_id, logical_gateway_id, alert_type, latitude, longitude, position_mm, session_name, archive_sha256, source, peak_axis, peak_value_g, speed_kmph, alert, session_status, zone, division, section, archived_at, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+            (train_no, gateway_id, logical_gateway_id, alert_type, latitude, longitude, position_mm, session_name, archive_sha256, source, peak_axis, peak_value_g, speed_kmph, alert, session_status, zone, division, section, archived_at, created_at, sensor, axis, channel, threshold_g, location_km, start_km, end_km, window_speed_kmph, min_speed_kmph, max_speed_kmph, alerts_count)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
         """, alert_data)
 
     try:
@@ -317,18 +331,27 @@ async def heartbeat(
         command = await db.pg_pool.fetchrow("SELECT type, status FROM gateway_commands WHERE command_id = $1 AND gateway_id = $2", result.commandId, gateway_id)
         if not command or command.get("type") != result.type:
             continue
-        if command.get("status") in ("success", "failed", "superseded"):
+        if command.get("status") in ("success", "failed", "superseded", "ignored"):
             continue
 
         completed_at = result.completedAt or now
-        res_json = json.dumps({
+        res_dict = {
             "commandId": result.commandId,
             "type": result.type,
             "status": result.status,
             "completedAt": completed_at.isoformat(),
-            "location": result.location,
-            "details": result.details,
-        })
+        }
+        if result.location is not None:
+            res_dict["location"] = result.location
+        if result.details is not None:
+            res_dict["details"] = result.details
+        if hasattr(result, "reason") and result.reason is not None:
+            res_dict["reason"] = result.reason
+        if hasattr(result, "nodes") and result.nodes is not None:
+            nodes_dict = result.nodes.model_dump(exclude_unset=True) if hasattr(result.nodes, "model_dump") else result.nodes.dict(exclude_unset=True)
+            res_dict["nodes"] = nodes_dict
+        
+        res_json = json.dumps(res_dict)
         await db.pg_pool.execute("UPDATE gateway_commands SET status = $1, result = $2::jsonb, completed_at = $3 WHERE command_id = $4 AND gateway_id = $5", result.status, res_json, completed_at, result.commandId, gateway_id)
 
     await db.pg_pool.execute("UPDATE gateways SET last_seen = $1, status = 'active', last_heartbeat = $1 WHERE gateway_id = $2", now, gateway_id)
@@ -455,7 +478,7 @@ async def complete_upload(
 ):
     gateway_id = request.state.gateway_id
     
-    lease = await db.pg_pool.fetchrow("SELECT remote_temp_path AS \"remoteTempPath\", remote_final_path AS \"remoteFinalPath\", size_bytes AS \"sizeBytes\", sha256, expires_utc AS \"expiresUtc\", logical_gateway_id AS \"logicalGatewayId\" FROM upload_leases WHERE upload_id = $1 AND gateway_id = $2", data.uploadId, gateway_id)
+    lease = await db.pg_pool.fetchrow("SELECT remote_temp_path AS \"remoteTempPath\", remote_final_path AS \"remoteFinalPath\", size_bytes AS \"sizeBytes\", sha256, expires_utc AS \"expiresUtc\", logical_gateway_id AS \"logicalGatewayId\", status FROM upload_leases WHERE upload_id = $1 AND gateway_id = $2", data.uploadId, gateway_id)
     if not lease:
         raise HTTPException(status_code=404, detail="Upload lease not found or does not belong to this gateway")
 
@@ -466,9 +489,47 @@ async def complete_upload(
     final_path = lease.get("remoteFinalPath")
     lease_size = lease.get("sizeBytes")
     lease_sha = lease.get("sha256")
+    lease_status = lease.get("status")
 
     if not temp_path or not final_path:
         raise HTTPException(status_code=500, detail="Lease record is missing path fields.")
+
+    # 1. If this lease was already processed, return immediate success
+    if lease_status == "processed":
+        return {
+            "status": "verified",
+            "uploadId": data.uploadId,
+            "remoteFinalPath": final_path,
+            "sha256Verified": True,
+            "message": "Upload already processed"
+        }
+
+    # 2. Check if archive was already ingested under this SHA-256 (handles duplicate retries)
+    expected_sha = lease_sha or data.sha256
+    if expected_sha:
+        existing_archive = await db.pg_pool.fetchrow(
+            "SELECT id, session_name, status FROM archives WHERE gateway_id = $1 AND sha256 = $2 AND status IN ('processed', 'processed_with_warnings')",
+            gateway_id, expected_sha.lower()
+        )
+        if existing_archive:
+            await db.pg_pool.execute("UPDATE upload_leases SET status = 'processed' WHERE upload_id = $1", data.uploadId)
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+            return {
+                "status": "verified",
+                "uploadId": data.uploadId,
+                "remoteFinalPath": final_path,
+                "sha256Verified": True,
+                "ingestion": {
+                    "status": "success",
+                    "sha256": expected_sha.lower(),
+                    "sessionName": existing_archive.get("session_name"),
+                    "message": "Archive already ingested"
+                }
+            }
     
     if not os.path.exists(temp_path):
         raise HTTPException(status_code=400, detail=f"Partial upload file not found on server at {temp_path}")
@@ -479,7 +540,7 @@ async def complete_upload(
         
     disk_sha = sha256()
     with open(temp_path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
+        for chunk in iter(lambda: f.read(4 * 1024 * 1024), b""):
             disk_sha.update(chunk)
     actual_sha = disk_sha.hexdigest()
     
@@ -487,13 +548,31 @@ async def complete_upload(
         raise HTTPException(status_code=400, detail=f"SHA-256 verification failed")
         
     try:
-        if os.path.exists(final_path):
-            os.remove(final_path)
-        os.rename(temp_path, final_path)
+        os.replace(temp_path, final_path)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to finalize file transfer: {exc}")
         
     await db.pg_pool.execute("UPDATE upload_leases SET status = 'verified' WHERE upload_id = $1", data.uploadId)
+
+    # 3. Check if actual computed sha was already processed
+    existing_archive = await db.pg_pool.fetchrow(
+        "SELECT id, session_name, status FROM archives WHERE gateway_id = $1 AND sha256 = $2 AND status IN ('processed', 'processed_with_warnings')",
+        gateway_id, actual_sha.lower()
+    )
+    if existing_archive:
+        await db.pg_pool.execute("UPDATE upload_leases SET status = 'processed' WHERE upload_id = $1", data.uploadId)
+        return {
+            "status": "verified",
+            "uploadId": data.uploadId,
+            "remoteFinalPath": final_path,
+            "sha256Verified": True,
+            "ingestion": {
+                "status": "success",
+                "sha256": actual_sha.lower(),
+                "sessionName": existing_archive.get("session_name"),
+                "message": "Archive already ingested"
+            }
+        }
     
     try:
         effective_logical_id = data.logicalGatewayId or lease.get("logicalGatewayId")
@@ -509,11 +588,6 @@ async def complete_upload(
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {exc}")
     
     await db.pg_pool.execute("UPDATE upload_leases SET status = 'processed' WHERE upload_id = $1", data.uploadId)
-
-    try:
-        os.remove(final_path)
-    except OSError:
-        pass
 
     return {
         "status": "verified",
@@ -599,30 +673,175 @@ async def create_alert(
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors())
 
-    if data.gatewayId and data.gatewayId != gateway_id:
+    if data.gatewayId and normalize_gateway_id(data.gatewayId) != normalize_gateway_id(gateway_id) and data.gatewayId != gateway_id:
         raise HTTPException(status_code=403, detail="Session or API key does not belong to supplied gateway")
     train_no = await resolve_train_id(gateway_id, data.trainNo, request.state.train_id)
 
-    if data.peakValueG > 80:
-        color = "RED"
-    elif data.peakValueG > 50:
-        color = "YELLOW"
-    else:
-        color = "GREEN"
-
     now = utc_now()
-    document = {
-        "gatewayId": gateway_id,
-        "trainNo": train_no,
-        "latitude": data.latitude,
-        "longitude": data.longitude,
-        "peakValueG": data.peakValueG,
-        "alert": color,
-        "createdAt": now,
-    }
-    await db.pg_pool.execute("INSERT INTO alert_events (gateway_id, train_no, logical_gateway_id, latitude, longitude, peak_value_g, alert, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", gateway_id, train_no, data.logicalGatewayId, data.latitude, data.longitude, data.peakValueG, color, now)
+    created_at = datetime.fromtimestamp(data.timestampUtcMs / 1000.0, tz=UTC) if data.timestampUtcMs else now
+
+    # Store window-level alert data
+    window_row = await db.pg_pool.fetchrow("""
+        INSERT INTO window_alerts (
+            gateway_id, logical_gateway_id, train_no, session_name,
+            timestamp_utc_ms, start_km, end_km, speed_kmph,
+            min_speed_kmph, max_speed_kmph, alerts_count, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        RETURNING id
+    """, gateway_id, data.logicalGatewayId, train_no, data.sessionName,
+       data.timestampUtcMs, data.startKm, data.endKm, data.speedKmph,
+       data.minSpeedKmph, data.maxSpeedKmph, data.alertsCount, created_at)
+    window_alert_id = window_row["id"] if window_row else None
+
+    # Determine axis colors and index each axis violation into alert_events
+    overall_color = "GREEN"
+    axis_documents = []
+
+    for item in data.alerts:
+        if item.peakValueG > 80:
+            axis_color = "RED"
+        elif item.peakValueG > 50:
+            axis_color = "YELLOW"
+        elif item.thresholdG and item.peakValueG >= item.thresholdG:
+            axis_color = "RED" if (item.peakValueG >= item.thresholdG * 1.5 or item.peakValueG >= 8.0) else "YELLOW"
+        else:
+            axis_color = "GREEN"
+
+        if axis_color == "RED":
+            overall_color = "RED"
+        elif axis_color == "YELLOW" and overall_color != "RED":
+            overall_color = "YELLOW"
+
+        pos_mm = int(round(item.locationKm * 1_000_000)) if item.locationKm is not None else None
+
+        await db.pg_pool.execute("""
+            INSERT INTO alert_events (
+                gateway_id, train_no, logical_gateway_id, alert_type,
+                sensor, axis, channel, peak_axis,
+                latitude, longitude, position_mm, location_km,
+                start_km, end_km, session_name, source,
+                peak_value_g, threshold_g, speed_kmph,
+                window_speed_kmph, min_speed_kmph, max_speed_kmph,
+                alerts_count, window_alert_id, alert, session_status, created_at
+            ) VALUES (
+                $1, $2, $3, $4,
+                $5, $6, $7, $8,
+                $9, $10, $11, $12,
+                $13, $14, $15, $16,
+                $17, $18, $19,
+                $20, $21, $22,
+                $23, $24, $25, $26, $27
+            )
+        """,
+            gateway_id, train_no, data.logicalGatewayId, "realtime",
+            item.sensor, item.axis, item.channel, item.channel,
+            item.latitude, item.longitude, pos_mm, item.locationKm,
+            data.startKm, data.endKm, data.sessionName, "api_v1_alert",
+            item.peakValueG, item.thresholdG, item.speedKmph,
+            data.speedKmph, data.minSpeedKmph, data.maxSpeedKmph,
+            data.alertsCount, window_alert_id, axis_color, "active", created_at
+        )
+        axis_documents.append({
+            "sensor": item.sensor,
+            "axis": item.axis,
+            "channel": item.channel,
+            "peakValueG": item.peakValueG,
+            "thresholdG": item.thresholdG,
+            "speedKmph": item.speedKmph,
+            "locationKm": item.locationKm,
+            "latitude": item.latitude,
+            "longitude": item.longitude,
+            "alert": axis_color,
+        })
+
+        # Evaluate route-wise limits and send SMS
+        if item.speedKmph > 80:
+            route_info = await db.pg_pool.fetchrow(
+                "SELECT r.id, r.name, r.vertical_limit, r.lateral_limit FROM trains t JOIN routes r ON t.route_id = r.id WHERE t.train_no = $1 LIMIT 1",
+                train_no
+            )
+            if route_info:
+                # Determine limit based on axis
+                is_vertical = item.axis.upper() == "Z"
+                is_lateral = item.axis.upper() == "Y"
+                
+                route_threshold = None
+                if is_vertical:
+                    route_threshold = route_info.get("vertical_limit")
+                elif is_lateral:
+                    route_threshold = route_info.get("lateral_limit")
+                
+                if route_threshold and item.peakValueG >= route_threshold:
+                    # Check for 50m window filtering
+                    # Look for higher peaks in the same axis within +/- 0.050 km (50m) in the last hour
+                    recent_higher_peak = await db.pg_pool.fetchval(
+                        """
+                        SELECT 1 FROM alert_events 
+                        WHERE train_no = $1 
+                          AND axis = $2 
+                          AND location_km BETWEEN $3 AND $4
+                          AND peak_value_g >= $5
+                          AND created_at >= NOW() - INTERVAL '1 hour'
+                        LIMIT 1
+                        """,
+                        train_no, item.axis, item.locationKm - 0.050, item.locationKm + 0.050, item.peakValueG
+                    )
+                    
+                    if not recent_higher_peak:
+                        # Fetch relevant contacts
+                        contacts = await db.pg_pool.fetch(
+                            "SELECT id, mobile_number FROM contacts WHERE route_id = $1 AND sms_enabled = TRUE AND active = TRUE",
+                            route_info.get("id")
+                        )
+                        # Assume track feature can be looked up or passed, for now use a placeholder
+                        nearest_feature = "Unknown"
+                        
+                        msg = (f"apnaUABAMS Alert Train: {train_no} "
+                               f"Route: {route_info.get('name')} "
+                               f"Type: {'Vertical' if is_vertical else 'Lateral'} "
+                               f"Acc. Value: {item.peakValueG:.2f}g "
+                               f"Limit: {route_threshold}g "
+                               f"Speed: {item.speedKmph:.2f}kmph "
+                               f"GPS: {item.latitude},{item.longitude} "
+                               f"Feature: {nearest_feature}")
+                        
+                        from app.utils import send_sms
+                        for contact in contacts:
+                            success, reason = send_sms(contact.get("mobile_number"), msg)
+                            status = "SENT" if success else "FAILED"
+                            
+                            # Log the notification
+                            await db.pg_pool.execute(
+                                "INSERT INTO alert_notifications (alert_id, contact_id, notification_type, status, failure_reason) VALUES ($1, $2, $3, $4, $5)",
+                                window_alert_id, contact.get("id"), "SMS", status, reason
+                            )
+
+
     await mark_gateway_online(gateway_id, now)
-    return {"status": "success", "alert": color, "event": serialize(document)}
+
+    window_document = {
+        "windowAlertId": window_alert_id,
+        "gatewayId": gateway_id,
+        "logicalGatewayId": data.logicalGatewayId,
+        "trainNo": train_no,
+        "sessionName": data.sessionName,
+        "timestampUtcMs": data.timestampUtcMs,
+        "startKm": data.startKm,
+        "endKm": data.endKm,
+        "speedKmph": data.speedKmph,
+        "minSpeedKmph": data.minSpeedKmph,
+        "maxSpeedKmph": data.maxSpeedKmph,
+        "alertsCount": data.alertsCount,
+        "alerts": axis_documents,
+        "alert": overall_color,
+        "createdAt": serialize(created_at),
+    }
+    return {
+        "status": "success",
+        "alert": overall_color,
+        "windowAlertId": window_alert_id,
+        "event": serialize(window_document),
+    }
 
 
 @router.get("/api/v1/trains/{train_no}/archives")
@@ -701,16 +920,30 @@ def _compute_color(item: dict) -> str:
 
 
 @router.get("/api/v1/map/alerts")
-async def map_alerts(train_id: str):
-    latest_record = await db.pg_pool.fetchrow("SELECT session_name FROM rms_records WHERE train_id = $1 ORDER BY created_at DESC LIMIT 1", train_id)
-    
-    query = "SELECT train_no AS \"trainNo\", gateway_id AS \"gatewayId\", latitude, longitude, alert, peak_value_g AS \"peakValueG\", zone, division, section, created_at AS \"createdAt\" FROM alert_events WHERE train_no = $1 AND session_status != 'archived'"
+async def map_alerts(train_id: str, severity: str | None = None):
+    where_clauses = [
+        "train_no = $1",
+        "session_status != 'archived'",
+        "latitude IS NOT NULL",
+        "latitude != 0",
+        "longitude IS NOT NULL",
+        "longitude != 0"
+    ]
     args = [train_id]
-    if latest_record and latest_record.get("session_name"):
-        query += " AND (session_name = $2 OR session_name IS NULL OR session_name = '')"
-        args.append(latest_record["session_name"])
-        
-    query += " ORDER BY created_at DESC LIMIT 200"
+    if severity and severity.upper() != "ALL":
+        where_clauses.append(f"alert = ${len(args) + 1}")
+        args.append(severity.upper())
+
+    where_sql = " AND ".join(where_clauses)
+    query = f"""
+        SELECT train_no AS "trainNo", gateway_id AS "gatewayId", latitude, longitude,
+               alert, peak_value_g AS "peakValueG", zone, division, section,
+               created_at AS "createdAt"
+        FROM alert_events
+        WHERE {where_sql}
+        ORDER BY created_at DESC
+        LIMIT 500
+    """
     alerts = await db.pg_pool.fetch(query, *args)
     
     return [
@@ -732,81 +965,88 @@ async def map_alerts(train_id: str):
 
 @router.get("/api/v1/map/rms")
 async def map_rms(train_id: str, gateway_id: str | None = None):
-    query = "SELECT train_id AS \"trainId\", gateway_id AS \"gatewayId\", session_name AS \"sessionName\", latitude, longitude, axes, position_mm AS \"positionMm\", created_at AS \"createdAt\", archive_sha256 AS \"archiveSha256\" FROM rms_records WHERE train_id = $1 AND gps_valid = TRUE AND latitude IS NOT NULL AND latitude != 0 AND longitude IS NOT NULL AND longitude != 0"
+    where_clauses = [
+        "train_id = $1",
+        "gps_valid = TRUE",
+        "latitude IS NOT NULL",
+        "latitude != 0",
+        "longitude IS NOT NULL",
+        "longitude != 0"
+    ]
     args = [train_id]
     if gateway_id:
-        query += " AND gateway_id = $2"
+        where_clauses.append(f"gateway_id = ${len(args) + 1}")
         args.append(gateway_id)
-    query += " ORDER BY created_at DESC, gateway_id ASC, position_mm DESC LIMIT 10000"
-    
-    recent_records = await db.pg_pool.fetch(query, *args)
-    records_by_gateway = {}
-    for item in recent_records:
-        g_id = item.get("gatewayId") or "unknown"
-        records_by_gateway.setdefault(g_id, []).append(dict(item))
+
+    where_sql = " AND ".join(where_clauses)
+
+    total_count = await db.pg_pool.fetchval(
+        f"SELECT count(*) FROM rms_records WHERE {where_sql}", *args
+    ) or 0
+
+    if total_count == 0:
+        return []
+
+    target_points = 5000
+    if total_count <= target_points:
+        query = f"""
+            SELECT train_id AS "trainId", gateway_id AS "gatewayId", session_name AS "sessionName",
+                   latitude, longitude, axes, position_mm AS "positionMm", created_at AS "createdAt",
+                   archive_sha256 AS "archiveSha256"
+            FROM rms_records
+            WHERE {where_sql}
+            ORDER BY gateway_id ASC, position_mm ASC
+        """
+        rows = await db.pg_pool.fetch(query, *args)
+    else:
+        step = max(1, total_count // target_points)
+        step_param_idx = len(args) + 1
+        query_args = list(args) + [step]
+        query = f"""
+            WITH base AS (
+                SELECT 
+                    train_id AS "trainId", gateway_id AS "gatewayId", session_name AS "sessionName",
+                    latitude, longitude, axes, position_mm AS "positionMm", created_at AS "createdAt",
+                    archive_sha256 AS "archiveSha256",
+                    ROW_NUMBER() OVER (PARTITION BY gateway_id ORDER BY position_mm ASC) as rn,
+                    COUNT(*) OVER (PARTITION BY gateway_id) as total_gw
+                FROM rms_records
+                WHERE {where_sql}
+            )
+            SELECT "trainId", "gatewayId", "sessionName", latitude, longitude, axes, "positionMm", "createdAt", "archiveSha256"
+            FROM base
+            WHERE rn % ${step_param_idx} = 0 OR rn = 1 OR rn = total_gw
+            ORDER BY "gatewayId" ASC, "positionMm" ASC
+        """
+        rows = await db.pg_pool.fetch(query, *query_args)
 
     records = []
-    for gateway_records in records_by_gateway.values():
-        if not gateway_records:
-            continue
-        latest_session = gateway_records[0].get("sessionName")
-        if latest_session:
-            session_records = [r for r in gateway_records if r.get("sessionName") == latest_session]
-        else:
-            latest_archive = gateway_records[0].get("archiveSha256")
-            session_records = [r for r in gateway_records if r.get("archiveSha256") == latest_archive]
-            
-        archives_map = {}
-        for r in session_records:
-            sha = r.get("archiveSha256") or "unknown"
-            archives_map.setdefault(sha, []).append(r)
-            
-        archive_infos = []
-        for sha, recs in archives_map.items():
-            positions = [x.get("positionMm") for x in recs if x.get("positionMm") is not None]
-            min_pos = min(positions) if positions else 0
-            max_pos = max(positions) if positions else 0
-            latest_created = max(x.get("createdAt") for x in recs) if recs else 0
-            archive_infos.append({
-                "sha": sha, "min_pos": min_pos, "max_pos": max_pos,
-                "created_at": latest_created, "records": recs
-            })
-            
-        archive_infos.sort(key=lambda x: x["created_at"], reverse=True)
-        
-        selected_archives = []
-        selected_ranges = []
-        for info in archive_infos:
-            overlap = False
-            for r_min, r_max in selected_ranges:
-                if not (info["max_pos"] < r_min + 500 or info["min_pos"] > r_max - 500):
-                    overlap = True
-                    break
-            if not overlap:
-                selected_archives.append(info)
-                selected_ranges.append((info["min_pos"], info["max_pos"]))
-                
-        selected_archives.sort(key=lambda x: x["created_at"])
-        
-        for info in selected_archives:
-            archive_records = info["records"]
-            archive_records.sort(key=lambda x: x.get("positionMm") or 0)
-            records.extend(archive_records)
+    last_coords_by_gw = {}
+    for item in rows:
+        g_id = item.get("gatewayId") or "unknown"
+        lat = round(float(item["latitude"]), 5)
+        lon = round(float(item["longitude"]), 5)
+        last_coord = last_coords_by_gw.get(g_id)
+        color = _compute_color(item)
 
-    return [
-        {
-            "train_id": item.get("trainId"),
-            "gateway_id": item.get("gatewayId"),
-            "session": item.get("sessionName"),
-            "lat": item.get("latitude"),
-            "lon": item.get("longitude"),
-            "color": _compute_color(item),
-            "peak_g": 0,
-            "position_mm": item.get("positionMm"),
-            "created_at": serialize(item.get("createdAt")),
-        }
-        for item in records
-    ]
+        if last_coord != (lat, lon):
+            records.append({
+                "train_id": item.get("trainId"),
+                "gateway_id": item.get("gatewayId"),
+                "session": item.get("sessionName"),
+                "lat": item.get("latitude"),
+                "lon": item.get("longitude"),
+                "color": color,
+                "peak_g": 0,
+                "position_mm": item.get("positionMm"),
+                "created_at": serialize(item.get("createdAt")),
+            })
+            last_coords_by_gw[g_id] = (lat, lon)
+        else:
+            if color in ("RED", "YELLOW") and records and records[-1]["gateway_id"] == g_id:
+                records[-1]["color"] = color
+
+    return records
 
 
 @router.post("/api/v1/data/reset")
@@ -920,9 +1160,20 @@ async def reset_session(
         await db.pg_pool.execute("DELETE FROM rms_records WHERE train_id = $1", data.trainNo)
         await db.pg_pool.execute("DELETE FROM fault_records WHERE train_id = $1", data.trainNo)
         await db.pg_pool.execute("DELETE FROM alert_events WHERE train_no = $1", data.trainNo)
-        await db.pg_pool.execute("DELETE FROM uploaded_archives WHERE gateway_id IN (SELECT gateway_id FROM gateways WHERE train_id = $1)", data.trainNo)
+        await db.pg_pool.execute("DELETE FROM window_alerts WHERE train_no = $1", data.trainNo)
+        await db.pg_pool.execute("DELETE FROM archives WHERE gateway_id IN (SELECT gateway_id FROM gateways WHERE train_id = $1)", data.trainNo)
 
-    gateways = await db.pg_pool.fetch("SELECT gateway_id AS \"gatewayId\" FROM gateways WHERE train_id = $1", data.trainNo)
+    # Use gateway_train_assignments (new decoupled table) with gateway_status as fallback
+    gta_gateways = await db.pg_pool.fetch(
+        'SELECT DISTINCT gateway_id AS "gatewayId" FROM gateway_train_assignments WHERE train_id = $1 AND is_active = true',
+        data.trainNo
+    )
+    gateways = gta_gateways
+    if not gateways:
+        gateways = await db.pg_pool.fetch(
+            'SELECT DISTINCT gateway_id AS "gatewayId" FROM gateway_status WHERE train_id = $1',
+            data.trainNo
+        )
     queued_commands = []
     for gateway in gateways:
         gateway_id = gateway.get("gatewayId")
