@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --bg: #eef3f6;
   --surface: #ffffff;
   --surface-2: #f7f9fb;
@@ -692,6 +692,31 @@ code { font-family: Consolas, monospace; font-size: 13px; }
   .compact-form, .gateway-kpis { grid-template-columns: 1fr; }
 }
 
+/* Fix 2: Per-gateway alert card group container */
+.gateway-summary-group {
+  margin-bottom: 24px;
+}
+.gateway-summary-group:last-child {
+  margin-bottom: 0;
+}
+.gateway-summary-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.gateway-summary-label .gw-physical-id {
+  font-weight: 400;
+  opacity: 0.75;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 .alert-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(200px, 1fr));
@@ -1333,6 +1358,7 @@ code { font-family: Consolas, monospace; font-size: 13px; }
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
   overflow: hidden;
   animation: modalFadeIn 0.3s ease;
+  position: relative;
 }
 
 .modal-header {
@@ -1567,3 +1593,10 @@ body.fullscreen-map-mode #showAllMapsBtn {
 
 /* Override badge text color to black as requested by user */
 .badge { color: black !important; }
+
+/* Gateway physical ID sub-label */
+.gw-physical-id {
+  font-size: 0.8em;
+  color: var(--muted);
+  font-weight: normal;
+}

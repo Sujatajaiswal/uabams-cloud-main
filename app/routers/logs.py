@@ -29,7 +29,7 @@ async def create_activity_log(data: ActivityLogRequest, request: Request):
         INSERT INTO activity_logs (username, page, action, error_message, ip_address, latitude, longitude, created_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         """,
-        username, data.page, data.action, data.errorMessage, ip_addr, data.latitude, data.longitude, now
+        username, data.page, data.action, data.errorMessage or data.message, ip_addr, data.latitude, data.longitude, now
     )
     
     document = {

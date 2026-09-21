@@ -14,16 +14,19 @@ RMS_GATEWAY_FORMAT = "<Qifdd?B9f"
 RMS_LEGACY_RECORD_SIZE = 66
 RMS_LEGACY_FORMAT = "<Qidd?BIIIIIIIII"
 
-PEAK_RECORD_SIZE = 302
-PEAK_HEADER_FORMAT = "<iifB?"
-PEAK_AXIS_FORMAT_GATEWAY = "<fIQdd"
-PEAK_AXIS_FORMAT_LEGACY = "<IiQdd"
-PEAK_AXIS_SIZE = 32
+WINDOW_HEADER_FORMAT = "<ii3f4B"  # 24 bytes
+AXIS_RECORD_FORMAT = "<fifQdd"    # 36 bytes
+RECORD_SIZE = 24 + (9 * 36)       # 348 bytes
+PEAK_RECORD_SIZE = RECORD_SIZE
+PEAK_HEADER_FORMAT = WINDOW_HEADER_FORMAT
+PEAK_AXIS_FORMAT = AXIS_RECORD_FORMAT
+PEAK_AXIS_SIZE = 36
 
 FAULT_RECORD_SIZE = 75
 FAULT_FORMAT = "<QBBB64s"
 
 SENTINEL_U32 = 0xFFFFFFFF
+AXES = ["AL_X", "AL_Y", "AL_Z", "AR_X", "AR_Y", "AR_Z", "BG_X", "BG_Y", "BG_Z"]
 AXIS_NAMES = ("al_x", "al_y", "al_z", "ar_x", "ar_y", "ar_z", "bg_x", "bg_y", "bg_z")
 EXPECTED_RMS_INTERVAL_MM = 250
 RMS_INTERVAL_TOLERANCE_MM = 25
@@ -161,6 +164,77 @@ def parse_rms_bytes(raw: bytes, warnings: list[str] | None = None) -> list[dict[
 
     return records
 
+def parse_channel_info(channel_name: str) -> tuple[str, str, str]:
+    prefix_map = {
+        "AL": "AXLE_LEFT",
+        "AR": "AXLE_RIGHT",
+        "BG": "BOGIE",
+    }
+    upper = channel_name.upper().replace("-", "_")
+    parts = upper.split("_")
+    if len(parts) == 2 and parts[0] in prefix_map:
+        return prefix_map[parts[0]], parts[1], upper
+    return "UNKNOWN", upper, upper
+
+
+def parse_record(chunk: bytes) -> dict[str, Any]:
+    header = struct.unpack(WINDOW_HEADER_FORMAT, chunk[:24])
+    win_start, win_end, avg_speed, min_speed, max_speed, valid_mask, alert_gen, alerts_cnt, reserved = header
+
+    axes_data: dict[str, Any] = {}
+    offset = 24
+    for axis_name in AXES:
+        peak_g, pos_mm, peak_speed, master_cnt, lat, lon = struct.unpack(AXIS_RECORD_FORMAT, chunk[offset : offset + 36])
+        if not math.isfinite(peak_g):
+            peak_g = 0.0
+        loc_km = round(pos_mm / 1000000.0, 5)
+        axis_dict = {
+            "peakValueG": round(peak_g, 4),
+            "peakValueMg": int(round(peak_g * 1000)),
+            "positionMm": pos_mm,
+            "peakPositionMm": pos_mm,
+            "locationKm": loc_km,
+            "peakSpeedKmph": round(peak_speed, 2),
+            "speedKmph": round(peak_speed, 2),
+            "masterCount": master_cnt,
+            "peakMasterCount": master_cnt,
+            "latitude": lat,
+            "peakLat": lat,
+            "longitude": lon,
+            "peakLon": lon,
+        }
+        axes_data[axis_name] = axis_dict
+        axes_data[axis_name.lower()] = axis_dict
+        offset += 36
+
+    max_axis, max_axis_data = _max_peak_axis(axes_data)
+    max_g = max_axis_data.get("peakValueG") or 0.0
+
+    return {
+        "windowStartMm": win_start,
+        "windowEndMm": win_end,
+        "startKm": round(win_start / 1000000.0, 5),
+        "endKm": round(win_end / 1000000.0, 5),
+        "avgSpeedKmph": round(avg_speed, 2),
+        "minSpeedKmph": round(min_speed, 2),
+        "maxSpeedKmph": round(max_speed, 2),
+        "speedKmph": round(avg_speed, 2),
+        "validMask": valid_mask,
+        "alertGenerated": bool(alert_gen),
+        "alertsCount": alerts_cnt,
+        "axes": axes_data,
+        "maxPeakAxis": max_axis,
+        "maxPeakMg": max_axis_data.get("peakValueMg"),
+        "maxPeakG": round(max_g, 4),
+        "latitude": max_axis_data.get("peakLat"),
+        "longitude": max_axis_data.get("peakLon"),
+        "positionMm": max_axis_data.get("peakPositionMm"),
+        "locationKm": max_axis_data.get("locationKm"),
+        "masterCount": max_axis_data.get("peakMasterCount"),
+        "color": _color_for_g(max_g),
+    }
+
+
 def parse_peak_bytes(raw: bytes, warnings: list[str] | None = None) -> list[dict[str, Any]]:
     _warn_on_remainder("peak/peak_50m.bin", raw, PEAK_RECORD_SIZE, warnings)
     records: list[dict[str, Any]] = []
@@ -168,71 +242,11 @@ def parse_peak_bytes(raw: bytes, warnings: list[str] | None = None) -> list[dict
 
     for offset in range(0, usable, PEAK_RECORD_SIZE):
         chunk = raw[offset : offset + PEAK_RECORD_SIZE]
-        window_start, window_end, speed_kmph, valid_mask, alert_generated = struct.unpack_from(
-            PEAK_HEADER_FORMAT, chunk, 0
-        )
-        axes: dict[str, Any] = {}
-
-        for index, axis_name in enumerate(AXIS_NAMES):
-            base = 14 + index * PEAK_AXIS_SIZE
-            axes[axis_name] = _parse_peak_axis(chunk, base)
-
-        max_axis, max_axis_data = _max_peak_axis(axes)
-        max_g = max_axis_data.get("peakValueG") or 0.0
-        records.append(
-            {
-                "recordIndex": offset // PEAK_RECORD_SIZE,
-                "windowStartMm": window_start,
-                "windowEndMm": window_end,
-                "speedKmph": round(speed_kmph, 2),
-                "validMask": valid_mask,
-                "alertGenerated": alert_generated,
-                "axes": axes,
-                "maxPeakAxis": max_axis,
-                "maxPeakMg": max_axis_data.get("peakValueMg"),
-                "maxPeakG": round(max_g, 4),
-                "latitude": max_axis_data.get("peakLat"),
-                "longitude": max_axis_data.get("peakLon"),
-                "positionMm": max_axis_data.get("peakPositionMm"),
-                "masterCount": max_axis_data.get("peakMasterCount"),
-                "color": _color_for_g(max_g),
-            }
-        )
+        rec = parse_record(chunk)
+        rec["recordIndex"] = offset // PEAK_RECORD_SIZE
+        records.append(rec)
 
     return records
-
-
-def _parse_peak_axis(chunk: bytes, base: int) -> dict[str, Any]:
-    peak_mg, peak_position, peak_master_count, peak_lat, peak_lon = struct.unpack_from(
-        PEAK_AXIS_FORMAT_LEGACY, chunk, base
-    )
-    legacy_value = _mg_value(peak_mg)
-    legacy_g = legacy_value["g"]
-    if legacy_g is not None and 0 <= legacy_g <= 1000:
-        return {
-            "peakValueMg": legacy_value["mg"],
-            "peakValueG": legacy_value["g"],
-            "peakPositionMm": peak_position,
-            "peakMasterCount": peak_master_count,
-            "peakLat": peak_lat,
-            "peakLon": peak_lon,
-            "recordFormat": "legacy_uint_mg",
-        }
-
-    peak_g, peak_position, peak_master_count, peak_lat, peak_lon = struct.unpack_from(
-        PEAK_AXIS_FORMAT_GATEWAY, chunk, base
-    )
-    if not math.isfinite(peak_g):
-        peak_g = 0.0
-    return {
-        "peakValueMg": int(round(peak_g * 1000)),
-        "peakValueG": round(peak_g, 4),
-        "peakPositionMm": peak_position,
-        "peakMasterCount": peak_master_count,
-        "peakLat": peak_lat,
-        "peakLon": peak_lon,
-        "recordFormat": "gateway_float_g",
-    }
 
 def parse_fault_bytes(raw: bytes, warnings: list[str] | None = None) -> list[dict[str, Any]]:
     _warn_on_remainder("faults/faults.bin", raw, FAULT_RECORD_SIZE, warnings)
@@ -327,27 +341,70 @@ def peak_records_to_alert_events(
 ) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     for record in peak_records:
-        latitude = record.get("latitude")
-        longitude = record.get("longitude")
-        if latitude in (None, 0) or longitude in (None, 0):
+        alerts_count = record.get("alertsCount", 0)
+        axes_data = record.get("axes", {})
+
+        # Find axes that have valid GPS coordinates
+        candidate_axes = []
+        for axis_name in AXES:
+            ax_data = axes_data.get(axis_name)
+            if not ax_data:
+                continue
+            lat = ax_data.get("latitude")
+            lon = ax_data.get("longitude")
+            if lat in (None, 0) or lon in (None, 0):
+                continue
+            candidate_axes.append((axis_name, ax_data))
+
+        if not candidate_axes:
             continue
-        events.append(
-            {
-                "gatewayId": gateway_id,
-                "trainNo": train_id,
-                "sessionName": session_name,
-                "archiveSha256": archive_sha256,
-                "source": "peak_50m.bin",
-                "peakAxis": record.get("maxPeakAxis"),
-                "peakValueG": record.get("maxPeakG", 0),
-                "positionMm": record.get("positionMm"),
-                "speedKmph": record.get("speedKmph"),
-                "latitude": latitude,
-                "longitude": longitude,
-                "alert": record.get("color", "GREEN"),
-                "createdAt": created_at,
-            }
-        )
+
+        # Multi-Axis Alert Reporting:
+        # If alertsCount > 0, select the top `alertsCount` exceeded axes by peakValueG
+        if alerts_count > 0:
+            sorted_axes = sorted(
+                candidate_axes,
+                key=lambda item: item[1].get("peakValueG") or 0.0,
+                reverse=True,
+            )
+            selected_axes = sorted_axes[:alerts_count]
+        else:
+            max_axis, max_data = _max_peak_axis({k: v for k, v in candidate_axes})
+            if max_axis and max_data:
+                selected_axes = [(max_axis, max_data)]
+            else:
+                selected_axes = []
+
+        for axis_name, axis_data in selected_axes:
+            sensor, axis, channel = parse_channel_info(axis_name)
+            peak_g = axis_data.get("peakValueG", 0.0)
+            events.append(
+                {
+                    "gatewayId": gateway_id,
+                    "trainNo": train_id,
+                    "sessionName": session_name,
+                    "archiveSha256": archive_sha256,
+                    "source": "peak_50m.bin",
+                    "sensor": sensor,
+                    "axis": axis,
+                    "channel": channel,
+                    "peakAxis": channel,
+                    "peakValueG": peak_g,
+                    "positionMm": axis_data.get("positionMm"),
+                    "locationKm": axis_data.get("locationKm"),
+                    "speedKmph": axis_data.get("peakSpeedKmph", record.get("avgSpeedKmph")),
+                    "latitude": axis_data.get("latitude"),
+                    "longitude": axis_data.get("longitude"),
+                    "alert": _color_for_g(peak_g),
+                    "startKm": record.get("startKm"),
+                    "endKm": record.get("endKm"),
+                    "windowAvgSpeedKmph": record.get("avgSpeedKmph"),
+                    "minSpeedKmph": record.get("minSpeedKmph"),
+                    "maxSpeedKmph": record.get("maxSpeedKmph"),
+                    "alertsCount": alerts_count,
+                    "createdAt": created_at,
+                }
+            )
     return events
 
 
@@ -440,8 +497,14 @@ def _max_peak_axis(axes: dict[str, dict[str, Any]]) -> tuple[str | None, dict[st
     valid_axes = [
         (axis_name, axis_data)
         for axis_name, axis_data in axes.items()
-        if axis_data.get("peakValueG") is not None
+        if axis_name.isupper() and axis_data.get("peakValueG") is not None
     ]
+    if not valid_axes:
+        valid_axes = [
+            (axis_name, axis_data)
+            for axis_name, axis_data in axes.items()
+            if axis_data.get("peakValueG") is not None
+        ]
     if not valid_axes:
         return None, {}
     return max(valid_axes, key=lambda item: item[1].get("peakValueG") or 0)

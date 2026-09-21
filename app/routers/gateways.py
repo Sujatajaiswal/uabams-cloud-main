@@ -118,16 +118,19 @@ async def save_calibration(
     gateway_id: str,
     data: CalibrationUpdateRequest,
     request: Request,
+    train_no: str | None = None,
 ):
     if not is_operator_authenticated(request):
         raise HTTPException(status_code=401, detail="Operator login required")
     if not any((data.adxlLeft, data.adxlRight, data.bogie, data.encoder)):
         raise HTTPException(status_code=400, detail="At least one calibration section is required")
 
-    gateway = await db.pg_pool.fetchrow("SELECT train_id FROM gateways WHERE gateway_id = $1", gateway_id)
-    if not gateway:
-        raise HTTPException(status_code=404, detail="Gateway not registered")
-    train_id = gateway.get("train_id")
+    train_id = train_no
+    if not train_id:
+        gateway = await db.pg_pool.fetchrow("SELECT train_id FROM gateways WHERE gateway_id = $1", gateway_id)
+        if not gateway:
+            raise HTTPException(status_code=404, detail="Gateway not registered")
+        train_id = gateway.get("train_id")
 
     existing_query = """
         SELECT version, adxl_left, adxl_right, bogie, encoder

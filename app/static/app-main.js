@@ -1,3 +1,75 @@
+// =====================================================================
+// PER-TAB SESSION ISOLATION
+// sessionStorage is strictly isolated per browser tab; cookies are shared.
+// We store the JWT from login in sessionStorage and inject it as an
+// Authorization header on every fetch() so each tab uses its own identity
+// regardless of what cookie another tab set.
+// =====================================================================
+(function installPerTabSessionInterceptor() {
+  // Capture session_token from URL query param (set by login redirect)
+  try {
+    const urlParams = new URLSearchParams(window.location.search);
+    const tokenFromUrl = urlParams.get('session_token');
+    if (tokenFromUrl) {
+      sessionStorage.setItem('uabams_session_token', tokenFromUrl);
+      // Clean up URL so it doesn't leak on refresh
+      const url = new URL(window.location);
+      url.searchParams.delete('session_token');
+      window.history.replaceState({}, document.title, url.toString());
+    }
+  } catch (e) {}
+
+  const _nativeFetch = window.fetch.bind(window);
+  window.fetch = function(input, init = {}) {
+    const token = sessionStorage.getItem('uabams_session_token');
+    if (token) {
+      const headers = new Headers(init.headers || {});
+      if (!headers.has('Authorization')) {
+        headers.set('Authorization', 'Bearer ' + token);
+      }
+      init = { ...init, headers };
+    }
+    return _nativeFetch(input, init);
+  };
+})();
+
+// =====================================================================
+// SESSION TIMER (30 minutes countdown)
+// =====================================================================
+(function installSessionTimer() {
+  const SESSION_DURATION_MS = 30 * 60 * 1000;
+  
+  let expirationTime = sessionStorage.getItem('uabams_session_expires_at');
+  
+  if (!expirationTime) {
+    expirationTime = Date.now() + SESSION_DURATION_MS;
+    sessionStorage.setItem('uabams_session_expires_at', expirationTime);
+  } else {
+    expirationTime = parseInt(expirationTime, 10);
+  }
+
+  function updateTimerDisplay() {
+    const remaining = expirationTime - Date.now();
+    
+    if (remaining <= 0) {
+      sessionStorage.removeItem('uabams_session_token');
+      sessionStorage.removeItem('uabams_session_expires_at');
+      window.location.href = '/logout';
+      return;
+    }
+    
+    const timerText = document.getElementById('sessionTimerText');
+    if (timerText) {
+      const minutes = Math.floor(remaining / 60000);
+      const seconds = Math.floor((remaining % 60000) / 1000);
+      timerText.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }
+  }
+
+  setInterval(updateTimerDisplay, 1000);
+  updateTimerDisplay(); // Initial call
+})();
+
 function extractTrainNo(val) {
   if (!val) return '';
   return val.split(' - ')[0].trim();
@@ -5,7 +77,16 @@ function extractTrainNo(val) {
 window.closeFullscreenMap = function() {
   console.log('Close map clicked');
   document.body.classList.remove('fullscreen-map-mode');
-  document.querySelectorAll('.map-card').forEach(card => card.classList.remove('hidden'));
+  // Fix 3c: Restore correct per-gateway visibility *before* selectTab() re-renders
+  // so there is no intermediate frame where both maps flash visible.
+  const _visibleIds = visibleGatewayIds ? visibleGatewayIds() : [];
+  document.querySelectorAll('.map-card').forEach(card => {
+    const gw = card.getAttribute('data-map-gateway');
+    // Show the card only if its gateway is currently in the visible set
+    const shouldShow = !gw || _visibleIds.length === 0 || _visibleIds.includes(gw) ||
+      dashboardGatewayIds.includes(gw);
+    card.classList.toggle('hidden', !shouldShow);
+  });
   const btn = document.getElementById('showAllMapsBtn');
   if (btn) btn.style.display = 'none';
   selectTab(window.lastActiveTabBeforeMap || 'alerts');
@@ -27,6 +108,7 @@ let chartYInstance = null;
 let chartZInstance = null;
 
 const $ = (id) => document.getElementById(id);
+
 
 function setText(id, value) {
   const el = $(id);
@@ -88,7 +170,10 @@ function visibleGatewayIds() {
   return selected ? [selected] : dashboardGatewayIds;
 }
 
-function gatewayLabel(gatewayId) {
+function gatewayLabel(gatewayId, logicalGatewayId) {
+  // Prefer logical gateway id as the display label (e.g. GW1_22151_BOGIE_01)
+  // Fall back to numbered slot label, then the raw physical ID
+  if (logicalGatewayId && logicalGatewayId !== gatewayId) return logicalGatewayId;
   const index = dashboardGatewayIds.indexOf(gatewayId);
   if (index >= 0) return `GW${index + 1}`;
   const fallbackIndex = defaultGatewayIds.indexOf(gatewayId);
@@ -263,7 +348,15 @@ function updateGatewaySelector(data) {
   dashboardGatewayIds = ids.length ? ids : [...defaultGatewayIds];
   const optionsHtml = [
     '<option value="">All Gateways</option>',
-    ...dashboardGatewayIds.map((gatewayId) => `<option value="${escapeHtml(gatewayId)}">${escapeHtml(`${gatewayLabel(gatewayId)} - ${gatewayId}`)}</option>`),
+    ...dashboardGatewayIds.map((gatewayId) => {
+      // Find the logical gateway id from current dashboard data for display
+      const gwData = (window._lastDashboardData?.gateways || []).find(g => g.gatewayId === gatewayId);
+      const logicalId = gwData?.logicalGatewayId || null;
+      const displayLabel = logicalId && logicalId !== gatewayId
+        ? `${logicalId} (${gatewayId})`
+        : `${gatewayLabel(gatewayId)} - ${gatewayId}`;
+      return `<option value="${escapeHtml(gatewayId)}">${escapeHtml(displayLabel)}</option>`;
+    }),
   ].join('');
   select.innerHTML = optionsHtml;
   select.value = dashboardGatewayIds.includes(previous) ? previous : '';
@@ -318,40 +411,51 @@ function lastDataTime(train, gateways, alerts, archives) {
   return train.updatedAt || archives[0]?.receivedAt || gateways.find((gw) => gw.lastHeartbeat)?.lastHeartbeat || alerts[0]?.createdAt;
 }
 
-function latestAlertFor(alerts, gatewayId) {
-  const gwAlerts = alerts.filter((alert) => alert.gatewayId === gatewayId);
+function latestAlertFor(alerts, gatewayId, logicalGatewayId) {
+  // Match by physical gatewayId OR by logicalGatewayId when available
+  const gwAlerts = alerts.filter((alert) =>
+    alert.gatewayId === gatewayId ||
+    (logicalGatewayId && (alert.gatewayId === logicalGatewayId || alert.logicalGatewayId === logicalGatewayId))
+  );
   if (!gwAlerts.length) return null;
-  
+
   const hasRed = gwAlerts.find(a => normalizeAlert(a.alert) === 'RED');
   if (hasRed) return hasRed;
-  
+
   const hasYellow = gwAlerts.find(a => normalizeAlert(a.alert) === 'YELLOW');
   if (hasYellow) return hasYellow;
-  
+
   return gwAlerts[0];
 }
 
-function archiveCountFor(archives, gatewayId) {
-  return archives.filter((archive) => archive.gatewayId === gatewayId).length;
+function archiveCountFor(archives, gatewayId, logicalGatewayId) {
+  return archives.filter((archive) =>
+    archive.gatewayId === gatewayId ||
+    (logicalGatewayId && archive.logicalGatewayId === logicalGatewayId)
+  ).length;
 }
 
 function renderGatewayCards(gatewayIdsToShow, gateways = [], train = {}, alerts = [], archives = []) {
   setHtml('gatewayList', gatewayIdsToShow.map((gatewayId) => {
     const gw = gateways.find((item) => item.gatewayId === gatewayId) || { gatewayId, trainId: train.trainNo, online: false };
-    const latest = latestAlertFor(alerts, gatewayId);
+    const logicalId = gw.logicalGatewayId || gw.logical_gateway_id || null;
+    const displayLabel = logicalId && logicalId !== gatewayId
+      ? `${escapeHtml(logicalId)} <span class="gw-physical-id" style="font-size: 0.85em; opacity: 0.8;">(${escapeHtml(gatewayId)})</span>`
+      : `${gatewayLabel(gatewayId)} - ${escapeHtml(gatewayId)}`;
+    const latest = latestAlertFor(alerts, gatewayId, logicalId);
     const alertStatus = normalizeAlert(latest?.alert);
     const statusClass = gw.online ? 'online-box' : 'offline-box';
     return `
-      <article class="gateway-card ${statusClass}">
+      <article class="gateway-card ${statusClass}" data-gateway="${escapeHtml(gatewayId)}">
         <div class="gateway-title">
-          <span>${gatewayLabel(gatewayId)} - ${gatewayId}</span>
+          <span>${displayLabel}</span>
           <span class="badge ${gw.online ? 'online' : 'offline'}">${gw.online ? 'Online' : 'Offline'}</span>
         </div>
         <div class="gateway-kpis">
           <div><span>Train</span><strong>${train.trainNo || gw.trainId || '-'}</strong></div>
           <div><span>Latest Peak</span><strong>${latest ? `${latest.peakValueG} G` : '-'}</strong></div>
           <div class="alert-kpi ${latest ? alertStatus : ''}"><span>Alert</span><strong>${latest ? alertStatus : '-'}</strong></div>
-          <div><span>Archives</span><strong>${archiveCountFor(archives, gatewayId)}</strong></div>
+          <div><span>Archives</span><strong>${archiveCountFor(archives, gatewayId, logicalId)}</strong></div>
         </div>
         <div>Last heartbeat: ${formatDate(gw.lastHeartbeat)}</div>
         <div>Last alert location: ${latest ? `${latest.latitude}, ${latest.longitude}` : '-'}</div>
@@ -360,8 +464,14 @@ function renderGatewayCards(gatewayIdsToShow, gateways = [], train = {}, alerts 
   }).join(''));
 }
 
+let mapInitRetries = 0;
 function initializeMaps() {
   if (!window.L) {
+    if (mapInitRetries < 10) {
+      mapInitRetries++;
+      setTimeout(initializeMaps, 250);
+      return;
+    }
     ['mapGw1', 'mapGw2'].forEach((target) => {
       setHtml(target, '<div class="empty-state">Leaflet map failed to load</div>');
     });
@@ -372,17 +482,25 @@ function initializeMaps() {
     { slotIndex: 0, target: 'mapGw1' },
     { slotIndex: 1, target: 'mapGw2' },
   ].forEach(({ slotIndex, target }) => {
-    if (!$(target)) return;
-    if (maps[slotIndex]) {
-      maps[slotIndex].remove();
+    const el = $(target);
+    if (!el) return;
+    try {
+      if (maps[slotIndex]) {
+        maps[slotIndex].remove();
+        maps[slotIndex] = null;
+      }
+      if (el._leaflet_id) {
+        el._leaflet_id = null;
+      }
+      maps[slotIndex] = L.map(target, { zoomControl: true }).setView([22.9734, 78.6569], 5);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors',
+        maxZoom: 19,
+      }).addTo(maps[slotIndex]);
+      layers[slotIndex] = L.layerGroup().addTo(maps[slotIndex]);
+    } catch (err) {
+      console.warn('Map initialization error on', target, err);
     }
-    maps[slotIndex] = L.map(target, { zoomControl: true }).setView([22.9734, 78.6569], 5);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
-      maxZoom: 19,
-    }).addTo(maps[slotIndex]);
-    layers[slotIndex] = L.layerGroup().addTo(maps[slotIndex]);
-
   });
 }
 
@@ -482,9 +600,13 @@ function renderDashboard(data) {
     can_view_alerts: true
   };
   
-  const swaggerBtn = document.getElementById('swaggerBtn') || document.querySelector('a[href="/docs"]');
+  const swaggerBtn = document.getElementById('swaggerBtn') || document.querySelector('a[href^="/docs"]');
   if (swaggerBtn) {
     swaggerBtn.style.display = (userRole === 'admin') ? '' : 'none';
+    const token = sessionStorage.getItem('uabams_session_token');
+    if (token) {
+      swaggerBtn.href = '/docs?session_token=' + encodeURIComponent(token);
+    }
   }
   const usersLink = document.getElementById('dropdownUsersLink');
   if (usersLink) {
@@ -495,8 +617,16 @@ function renderDashboard(data) {
     const tabId = button.dataset.tab;
     
     // Hide tabs based on RBAC permissions
-    if (['calibration', 'archives', 'reset', 'logs'].includes(tabId) && userRole !== 'admin') {
-      button.style.display = 'none'; // Strictly Admin only based on user request
+    if (tabId === 'calibration' && userRole !== 'admin' && !perms.can_configure_thresholds) {
+      button.style.display = 'none';
+    } else if (tabId === 'archives' && userRole !== 'admin' && !perms.can_view_archives) {
+      button.style.display = 'none';
+    } else if (tabId === 'reset' && userRole !== 'admin' && !perms.can_reset_session) {
+      button.style.display = 'none';
+    } else if (tabId === 'logs' && userRole !== 'admin' && !perms.can_view_logs) {
+      button.style.display = 'none';
+    } else if (tabId === 'alarm_log_reports' && userRole !== 'admin' && !perms.can_view_reports) {
+      button.style.display = 'none';
     } else if (tabId === 'users' && !perms.can_manage_users) {
       button.style.display = 'none';
     } else if (tabId === 'alerts' && !perms.can_view_alerts) {
@@ -511,14 +641,15 @@ function renderDashboard(data) {
   
   // Redirect to overview if they are on a tab they shouldn't see
   if (activeTabId === 'users' && !perms.can_manage_users) selectTab('alerts');
-  if (activeTabId === 'calibration' && !perms.can_configure_thresholds) selectTab('overview');
-  if (activeTabId === 'alerts' && !perms.can_view_alerts) selectTab('overview');
-  if (['calibration', 'archives', 'reset', 'logs'].includes(activeTabId) && userRole !== 'admin') {
-    selectTab('overview');
-  }
+  if (activeTabId === 'calibration' && userRole !== 'admin' && !perms.can_configure_thresholds) selectTab('overview');
+  if (activeTabId === 'archives' && userRole !== 'admin' && !perms.can_view_archives) selectTab('overview');
+  if (activeTabId === 'reset' && userRole !== 'admin' && !perms.can_reset_session) selectTab('overview');
+  if (activeTabId === 'logs' && userRole !== 'admin' && !perms.can_view_logs) selectTab('overview');
+  if (activeTabId === 'alarm_log_reports' && userRole !== 'admin' && !perms.can_view_reports) selectTab('overview');
 
   const oldGatewayIds = [...dashboardGatewayIds];
   state.dashboard = data;
+  window._lastDashboardData = data;  // Cache for gateway selector logical ID lookup
   updateGatewaySelector(data);
   const gatewaysChanged = oldGatewayIds.join(',') !== dashboardGatewayIds.join(',');
   const selectedGateway = selectedGatewayValue();
@@ -599,7 +730,11 @@ function renderDashboard(data) {
 
   setHtml('gatewayList', allGatewayIds.map((gatewayId) => {
     const gw = gateways.find((item) => item.gatewayId === gatewayId) || { gatewayId, trainId: train.trainNo, online: false };
-    const latest = latestAlertFor(alerts, gatewayId);
+    const logicalId = gw.logicalGatewayId || gw.logical_gateway_id || null;
+    const displayLabel = logicalId && logicalId !== gatewayId
+      ? `${escapeHtml(logicalId)} <span class="gw-physical-id" style="font-size: 0.85em; opacity: 0.8;">(${escapeHtml(gatewayId)})</span>`
+      : `${gatewayLabel(gatewayId)} - ${escapeHtml(gatewayId)}`;
+    const latest = latestAlertFor(alerts, gatewayId, logicalId);
     
     const latestPeakG = latest ? latest.peakValueG : ((gw.latestPeakG !== undefined && gw.latestPeakG !== null) ? gw.latestPeakG : null);
     const latestAlertVal = latest ? latest.alert : (gw.latestAlert ? gw.latestAlert : null);
@@ -613,16 +748,16 @@ function renderDashboard(data) {
     const statusClass = gw.online ? 'online-box' : 'offline-box';
     
     return `
-      <article class="gateway-card ${statusClass}">
+      <article class="gateway-card ${statusClass}" data-gateway="${escapeHtml(gatewayId)}">
         <div class="gateway-title">
-          <span>${gatewayLabel(gatewayId)} - ${gatewayId}</span>
+          <span>${displayLabel}</span>
           <span class="badge ${gw.online ? 'online' : 'offline'}">${gw.online ? 'Online' : 'Offline'}</span>
         </div>
         <div class="gateway-kpis">
           <div><span>Train</span><strong>${train.trainNo || gw.trainId || '-'}</strong></div>
           <div><span>Latest Peak</span><strong>${latestPeakG !== null ? `${latestPeakG} G` : '-'}</strong></div>
           <div class="alert-kpi ${latestAlertVal ? alertStatus : ''}"><span>Alert</span><strong>${alertDisplay}</strong></div>
-          <div><span>Archives</span><strong>${archiveCountFor(archives, gatewayId)}</strong></div>
+          <div><span>Archives</span><strong>${archiveCountFor(archives, gatewayId, logicalId)}</strong></div>
         </div>
         <div>Last heartbeat: ${formatDate(gw.lastHeartbeat)}</div>
         <div>Last alert location: ${latestLat && latestLon ? `${latestLat}, ${latestLon}` : '-'}</div>
@@ -665,25 +800,70 @@ function getItemDateStr(item) {
   return null;
 }
 function renderAlertSummary(alerts) {
-  const red = alerts.filter((alert) => alert.alert === 'RED').length;
-  const yellow = alerts.filter((alert) => alert.alert === 'YELLOW').length;
-  const green = alerts.filter((alert) => alert.alert === 'GREEN').length;
-  setText('alertTotal', alerts.length);
-  setText('alertRed', red);
-  setText('alertYellow', yellow);
-  setText('alertGreen', green);
+  // Fix 2: Per-gateway dynamic card groups.
+  // `alerts` here is summaryAlerts (already filtered by zone/division/section
+  // but NOT yet filtered by filterLevel, so counts are accurate totals).
+  const container = document.getElementById('alertSummaryContainer');
+  if (!container) return;
 
-  // Sync the active card styling based on current filter state
-  ['RED', 'YELLOW', 'GREEN', 'TOTAL'].forEach(lvl => {
-    const card = document.getElementById('card-' + lvl);
-    if (card) {
-      if (state.filterLevel === lvl || (state.filterLevel === null && lvl === 'TOTAL')) {
-        card.classList.add('card-active');
-      } else {
-        card.classList.remove('card-active');
-      }
-    }
-  });
+  // Determine which gateways to show cards for
+  const visibleIds = visibleGatewayIds();
+  const gwIds = visibleIds.length > 0 ? visibleIds : dashboardGatewayIds;
+  const showLabel = gwIds.length > 1;
+
+  const html = gwIds.map(gwId => {
+    const gwAlerts = alerts.filter(a => a.gatewayId === gwId);
+    const red    = gwAlerts.filter(a => normalizeAlert(a.alert) === 'RED').length;
+    const yellow = gwAlerts.filter(a => normalizeAlert(a.alert) === 'YELLOW').length;
+    const green  = gwAlerts.filter(a => normalizeAlert(a.alert) === 'GREEN').length;
+    const total  = gwAlerts.length;
+
+    const activeClass = (lvl) =>
+      (state.filterLevel === lvl || (state.filterLevel === null && lvl === 'TOTAL'))
+        ? ' card-active' : '';
+
+    return `
+      <div class="gateway-summary-group" data-summary-gateway="${escapeHtml(gwId)}">
+        ${showLabel ? `<div class="gateway-summary-label"><i class="bi bi-router"></i> ${escapeHtml(gatewayLabel(gwId))} &mdash; <span class="gw-physical-id">${escapeHtml(gwId)}</span></div>` : ''}
+        <div class="alert-summary-grid">
+          <div class="alert-summary red${activeClass('RED')}" onclick="filterByAlertLevel('RED')">
+            <div class="summary-content">
+              <span class="summary-title">Critical Defects</span>
+              <strong class="summary-value">${red}</strong>
+              <span class="summary-subtext">Action Required</span>
+            </div>
+            <div class="summary-icon"><i class="bi bi-exclamation-triangle"></i></div>
+          </div>
+          <div class="alert-summary yellow${activeClass('YELLOW')}" onclick="filterByAlertLevel('YELLOW')">
+            <div class="summary-content">
+              <span class="summary-title">Warning Defects</span>
+              <strong class="summary-value">${yellow}</strong>
+              <span class="summary-subtext">Monitor Closely</span>
+            </div>
+            <div class="summary-icon"><i class="bi bi-exclamation-circle"></i></div>
+          </div>
+          <div class="alert-summary green${activeClass('GREEN')}" onclick="filterByAlertLevel('GREEN')">
+            <div class="summary-content">
+              <span class="summary-title">Normal Alerts</span>
+              <strong class="summary-value">${green}</strong>
+              <span class="summary-subtext">Track in Good Condition</span>
+            </div>
+            <div class="summary-icon"><i class="bi bi-check-circle"></i></div>
+          </div>
+          <div class="alert-summary total${activeClass('TOTAL')}" onclick="filterByAlertLevel('TOTAL')">
+            <div class="summary-content">
+              <span class="summary-title">Total Alerts</span>
+              <strong class="summary-value">${total}</strong>
+              <span class="summary-subtext">Across Section</span>
+            </div>
+            <div class="summary-icon"><i class="bi bi-bar-chart"></i></div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  container.innerHTML = html;
 }
 
 window.focusAlertOnMap = function(lat, lon, gatewayId) {
@@ -691,21 +871,40 @@ window.focusAlertOnMap = function(lat, lon, gatewayId) {
   window.lastActiveTabBeforeMap = document.querySelector('.tab.active')?.dataset?.tab || 'alerts';
   selectTab('alerts');
   window.scrollTo({ top: 0, behavior: 'smooth' });
-  setTimeout(() => {
-    const showAllBtn = document.getElementById('showAllMapsBtn');
-    document.body.classList.add('fullscreen-map-mode');
-    document.querySelectorAll('.map-card').forEach(card => {
-      if (!gatewayId || card.getAttribute('data-map-gateway') === gatewayId) card.classList.remove('hidden');
-      else card.classList.add('hidden');
-    });
-    if (showAllBtn) {
-      showAllBtn.classList.remove('hidden'); showAllBtn.style.display = 'block';
-      showAllBtn.innerHTML = '<i class="bi bi-x-circle"></i> Close Map';
-      showAllBtn.onclick = window.closeFullscreenMap;
+
+  // ── Step 1: Enter fullscreen and show only the relevant gateway card ───
+  const showAllBtn = document.getElementById('showAllMapsBtn');
+  document.body.classList.add('fullscreen-map-mode');
+  document.querySelectorAll('.map-card').forEach(card => {
+    if (!gatewayId || card.getAttribute('data-map-gateway') === gatewayId) card.classList.remove('hidden');
+    else card.classList.add('hidden');
+  });
+  if (showAllBtn) {
+    showAllBtn.classList.remove('hidden'); showAllBtn.style.display = 'block';
+    showAllBtn.innerHTML = '<i class="bi bi-x-circle"></i> Close Map';
+    showAllBtn.onclick = window.closeFullscreenMap;
+  }
+
+  // ── Step 2: Update map size and view immediately after DOM reflow ──────
+  requestAnimationFrame(() => {
+    const slotIdx = gatewayId ? dashboardGatewayIds.indexOf(gatewayId) : 0;
+    const targetIdx = slotIdx >= 0 ? slotIdx : 0;
+    const primaryMap = maps[targetIdx];
+    
+    if (primaryMap) {
+      // Tell Leaflet about the new fullscreen size FIRST
+      primaryMap.invalidateSize({ animate: false });
+      // THEN set the view so it fetches enough tiles for the whole screen at once
+      primaryMap.setView([lat, lon], 17, { animate: false });
     }
-    setTimeout(() => { Object.values(maps).forEach(m => { if(m) { m.invalidateSize(); m.flyTo([lat, lon], 17, {duration: 1.5}); } }); }, 200);
-  }, 150);
+    
+    // Invalidate other map slots too
+    Object.values(maps).forEach((m, i) => { 
+      if (m && i !== targetIdx) m.invalidateSize({ animate: false }); 
+    });
+  });
 };
+
 
 function renderAlerts(alerts) {
   setHtml('alertsTable', alerts.length ? alerts.map((alert) => `
@@ -775,43 +974,21 @@ function trainIconHtml(bearing) {
 function drawColoredRoute(layer, points) {
   if (!layer || points.length < 2) return;
 
-  const latlngs = [];
-  for (let i = 1; i < points.length; i += 1) {
-    const previous = points[i - 1];
-    const current = points[i];
-    const severity = normalizeAlert(current.color);
-    const p1 = [Number(previous.lat), Number(previous.lon)];
-    const p2 = [Number(current.lat), Number(current.lon)];
-    latlngs.push(p1);
-    if (i === points.length - 1) latlngs.push(p2);
-
-    L.polyline([p1, p2], {
-      color: alertColor(severity),
-      weight: 6,
-      opacity: 0.9,
-      lineCap: 'round',
-      lineJoin: 'round',
-      smoothFactor: 1.2,
-      className: 'map-route-polyline',
-    }).addTo(layer);
-  }
-
-  if (window.L.polylineDecorator && latlngs.length > 1) {
-    L.polylineDecorator(L.polyline(latlngs), {
-      patterns: [
-        {
-          offset: '5%',
-          repeat: '100px',
-          symbol: L.Symbol.arrowHead({
-            pixelSize: 14,
-            polygon: false,
-            pathOptions: { stroke: true, weight: 3, color: '#1f2937', opacity: 0.8 }
-          })
-        }
-      ]
-    }).addTo(layer);
-  }
+  const latlngs = points.map(p => [Number(p.lat), Number(p.lon)]);
+  
+  // Draw the route as a solid standard track color (green)
+  // The actual alerts are drawn separately as markers on top of this route
+  L.polyline(latlngs, {
+    color: '#10b981', // Solid normal green for the track
+    weight: 6,
+    opacity: 0.9,
+    lineCap: 'round',
+    lineJoin: 'round',
+    smoothFactor: 1.2,
+    className: 'map-route-polyline',
+  }).addTo(layer);
 }
+
 
 
 function renderMaps(alerts, gateways, rmsPoints = [], mapAlerts = []) {
@@ -851,6 +1028,7 @@ function renderMaps(alerts, gateways, rmsPoints = [], mapAlerts = []) {
     const routePoints = validRmsPoints.filter((point) => point.gateway_id === gatewayId);
     const rawAlertPoints = (mapAlerts.length ? mapAlerts : alerts.map(dashboardAlertToMapPoint))
       .filter((point) => point.gateway_id === gatewayId)
+      // Fix 3b: Include GREEN markers too — not just RED/YELLOW
       .filter((point) => ['RED', 'YELLOW', 'GREEN'].includes(normalizeAlert(point.color)))
       .filter((point) => Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon)))
       .slice()
@@ -868,37 +1046,40 @@ function renderMaps(alerts, gateways, rmsPoints = [], mapAlerts = []) {
 
     drawColoredRoute(layer, routePoints);
 
-
     // Draw Heatmap (Deferred to avoid Canvas 0 width error when unhiding map)
-    if (window.L.heatLayer && alertPoints.length > 0) {
+    // Fix 3b: Heatmap only for RED/YELLOW (danger signals — GREEN is normal)
+    const heatAlertPoints = alertPoints.filter(p => normalizeAlert(p.color) !== 'GREEN');
+    if (window.L.heatLayer && heatAlertPoints.length > 0) {
       setTimeout(() => {
         if (!visibleIds.includes(gatewayId)) return;
-        const heatPoints = alertPoints.map(p => {
+        const heatPoints = heatAlertPoints.map(p => {
           const snapped = snapToRoute(p.lat, p.lon, routePoints);
           const severity = normalizeAlert(p.color);
-          const intensity = severity === 'RED' ? 1.0 : severity === 'YELLOW' ? 0.5 : 0.2;
+          const intensity = severity === 'RED' ? 1.0 : 0.6;
           return [snapped[0], snapped[1], intensity];
         });
         L.heatLayer(heatPoints, {
-          radius: 35,
-          blur: 25,
+          radius: 30,
+          blur: 20,
           maxZoom: 14,
-          gradient: {0.2: 'lime', 0.5: 'yellow', 1.0: 'red'}
+          gradient: {0.4: 'yellow', 0.8: 'orange', 1.0: 'red'}
         }).addTo(layer);
       }, 150);
     }
-    
+
+    // Fix 3b: Markers for RED, YELLOW, and GREEN alert events
     alertPoints.forEach((point, index) => {
       const severity = normalizeAlert(point.color);
-      if (severity !== 'RED' && severity !== 'YELLOW' && severity !== 'GREEN') return;
       const snapped = snapToRoute(point.lat, point.lon, routePoints);
       const markerPoint = jitterPoint(snapped[0], snapped[1], index);
-      const iconClass = severity === 'RED' ? 'bi-lightning-fill' : severity === 'YELLOW' ? 'bi-exclamation-triangle-fill' : 'bi-info-circle-fill';
-      const iconColor = severity === 'RED' ? '#ef4444' : severity === 'YELLOW' ? '#f59e0b' : '#10b981';
-      
+      const iconClass = 'bi-circle-fill'; // Use simple big filled circle for all alerts
+      const iconColor = severity === 'RED'    ? '#ef4444'
+                      : severity === 'YELLOW' ? '#f59e0b'
+                      : '#10b981';                       // GREEN
+
       const customIcon = L.divIcon({
         className: 'custom-alert-icon',
-        html: `<div style="color: ${iconColor}; font-size: 20px; text-shadow: 1px 1px 2px rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center;"><i class="bi ${iconClass}"></i></div>`,
+        html: `<div style="color: ${iconColor}; font-size: 20px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6)); display: flex; align-items: center; justify-content: center;"><i class="bi ${iconClass}"></i></div>`,
         iconSize: [24, 24],
         iconAnchor: [12, 12],
       });
@@ -909,21 +1090,18 @@ function renderMaps(alerts, gateways, rmsPoints = [], mapAlerts = []) {
     });
 
     let bounds;
-    if (alertPoints.length > 0) {
-      bounds = L.latLngBounds(
-        alertPoints.map((point, index) => {
-          const snapped = snapToRoute(point.lat, point.lon, routePoints);
-          return jitterPoint(snapped[0], snapped[1], index);
-        })
-      );
-    } else {
+    if (routePoints.length > 0) {
       bounds = L.latLngBounds(
         routePoints.map((point) => [Number(point.lat), Number(point.lon)])
       );
+    } else if (alertPoints.length > 0) {
+      bounds = L.latLngBounds(
+        alertPoints.map((point) => [Number(point.lat), Number(point.lon)])
+      );
     }
 
-    if (bounds.isValid()) {
-      map.fitBounds(bounds.pad(selectedGateway ? 0.35 : 0.25), { maxZoom: 17 });
+    if (bounds && bounds.isValid()) {
+      map.fitBounds(bounds.pad(selectedGateway ? 0.2 : 0.1), { maxZoom: 17 });
     }
   });
 
@@ -1145,20 +1323,38 @@ async function cleanupData() {
     radiusMeters: Number($('cleanupRadius')?.value || 100),
     reason: $('cleanupReason')?.value.trim() || null,
   };
-  if (!payload.gatewayId || payload.gatewayId === 'All Gateways' || !payload.startTime || !payload.endTime) {
-    setText('resetOutput', 'Please select a specific Gateway. or Please provide both Start Time and End Time.');
+
+  // SR 62: Enforce pair-wise coordinate validation
+  const hasLat = latitudeText !== '';
+  const hasLon = longitudeText !== '';
+  if (hasLat !== hasLon) {
+    const msg = 'Location filtering requires both Latitude AND Longitude. Please provide a complete coordinate pair, or leave both empty.';
+    setText('resetOutput', '⚠️ ' + msg);
+    await logClientEvent('reset_validation_error', { message: `Train ${trainNo}`, errorMessage: 'Incomplete coordinate pair: ' + (hasLat ? 'Latitude provided without Longitude' : 'Longitude provided without Latitude') });
     return;
   }
-  if ((payload.latitude !== null && payload.longitude === null) || (payload.latitude === null && payload.longitude !== null)) {
-    setText('resetOutput', 'Latitude and Longitude must be provided together as a pair.');
+
+  if (!payload.gatewayId || payload.gatewayId === 'All Gateways') {
+    const msg = 'Please select a specific Gateway before performing data cleanup.';
+    setText('resetOutput', '⚠️ ' + msg);
+    await logClientEvent('reset_validation_error', { message: `Train ${trainNo}`, errorMessage: 'No specific gateway selected for data cleanup' });
     return;
   }
+  if (!payload.startTime || !payload.endTime) {
+    const msg = 'Please provide both Start Time and End Time for the cleanup range.';
+    setText('resetOutput', '⚠️ ' + msg);
+    await logClientEvent('reset_validation_error', { message: `Train ${trainNo}`, errorMessage: 'Missing time range for data cleanup' });
+    return;
+  }
+
   if (!confirm(`Delete matching data for train ${trainNo}?`)) return;
-  
+
   const adminPwd = prompt(`Enter admin password for targeted cleanup of train ${trainNo}:`);
   if (adminPwd === null) return; // user cancelled
   if (!adminPwd.trim()) {
-    alert('Admin password is required.');
+    const msg = 'Admin password is required to perform data cleanup.';
+    alert(msg);
+    await logClientEvent('reset_auth_error', { message: `Train ${trainNo}`, errorMessage: 'Admin password not provided for data cleanup' });
     return;
   }
 
@@ -1170,11 +1366,15 @@ async function cleanupData() {
     });
     setText('resetOutput', JSON.stringify(data, null, 2));
     setStatus('Cleaned', 'ok');
+    // SR 65: Log successful data cleanup
+    await logClientEvent('reset_data_cleanup_success', { message: `Train ${trainNo} | Gateway: ${payload.gatewayId}` });
     await loadDashboard();
     await loadGatewayDetails();
   } catch (error) {
     setStatus('Error', 'error');
     setText('resetOutput', error.message);
+    // SR 65: Log error from Reset page into Logs
+    await logClientEvent('reset_data_cleanup_error', { message: `Train ${trainNo} | Gateway: ${payload.gatewayId}`, errorMessage: error.message });
   }
 }
 function renderSession(session, trainNo) {
@@ -1334,32 +1534,86 @@ async function loadCalibration(gatewayId) {
     if (output) output.textContent = error.message;
   }
 }
-
-
-
 async function saveCalibration(gatewayId) {
   const card = cardFor(gatewayId);
-  const output = card?.querySelector('[data-role="calOutput"]');    // Validate ranges and decimals
+  const output = card?.querySelector('[data-role="calOutput"]');
+
   if (card) {
-    const inputs = card.querySelectorAll('input[type="number"]');
-    for (const input of inputs) {
-      if (input.value !== '') {
+    // Define sections with their field names and display names
+    const sections = [
+      {
+        name: 'ADXL Left Offsets',
+        fields: ['adxlLeftX', 'adxlLeftY', 'adxlLeftZ'],
+      },
+      {
+        name: 'ADXL Right Offsets',
+        fields: ['adxlRightX', 'adxlRightY', 'adxlRightZ'],
+      },
+      {
+        name: 'Bogie Sensor Offsets (IIS / IMU Accel / IMU Gyro)',
+        fields: ['iisX', 'iisY', 'iisZ', 'imuAccelX', 'imuAccelY', 'imuAccelZ', 'imuGyroX', 'imuGyroY', 'imuGyroZ'],
+      },
+      {
+        name: 'Encoder Settings',
+        fields: ['wheelDiameterM', 'encoderPpr', 'spatialIntervalMm', 'triggerStartSpeedKmph'],
+      },
+    ];
+
+    // Collect which sections have out-of-range values
+    const invalidSections = [];
+    let firstInvalidInput = null;
+
+    for (const section of sections) {
+      let sectionInvalid = false;
+      for (const fieldName of section.fields) {
+        const input = field(card, fieldName);
+        if (!input || input.value === '') continue;
         if (!input.checkValidity()) {
-          alert(`Invalid value. Please enter a value between ${input.min} and ${input.max}.`);
-          input.focus();
-          return;
-        }
-        if (input.dataset.field === 'triggerStartSpeedKmph' && !input.value.includes('.')) {
-          alert(`Trigger Start Speed must be a decimal value (e.g., 20.0 instead of 20).`);
-          input.focus();
-          return;
-        }
-        if (input.dataset.field === 'wheelDiameterM' && !input.value.includes('.')) {
-          alert(`Wheel Diameter must be a decimal value (e.g., 0.915 instead of 1).`);
-          input.focus();
-          return;
+          sectionInvalid = true;
+          if (!firstInvalidInput) firstInvalidInput = input;
         }
       }
+      if (sectionInvalid) invalidSections.push(section.name);
+    }
+
+    if (invalidSections.length > 0) {
+      let msg = '';
+      if (invalidSections.length === sections.length) {
+        msg = `⚠️ Out-of-range values detected in ALL sections (ADXL Left, ADXL Right, Bogie, Encoder). Please review and correct all values before saving.`;
+      } else if (invalidSections.length === 1) {
+        if (invalidSections[0].includes('ADXL Left')) {
+          msg = `⚠️ The ADXL Left values are out of range. Please fix the left accelerometer offsets.`;
+        } else if (invalidSections[0].includes('ADXL Right')) {
+          msg = `⚠️ The ADXL Right values are out of range. Please fix the right accelerometer offsets.`;
+        } else if (invalidSections[0].includes('Bogie')) {
+          msg = `⚠️ The Bogie values are out of range. Please fix the IMU/IIS sensor offsets.`;
+        } else if (invalidSections[0].includes('Encoder')) {
+          msg = `⚠️ The Encoder values are out of range. Please fix the speed and distance settings.`;
+        } else {
+          msg = `⚠️ Out-of-range value detected in ${invalidSections[0]}.`;
+        }
+      } else {
+        msg = `⚠️ Out-of-range values detected in the following sections:\n\n` +
+          invalidSections.map(s => `  • ${s}`).join('\n') +
+          `\n\nPlease enter values within the allowed range for each section.`;
+      }
+      alert(msg);
+      if (firstInvalidInput) firstInvalidInput.focus();
+      return;
+    }
+
+    // Extra decimal checks
+    const triggerInput = field(card, 'triggerStartSpeedKmph');
+    if (triggerInput && triggerInput.value !== '' && !triggerInput.value.includes('.')) {
+      alert(`Trigger Start Speed must be a decimal value (e.g., 20.0 instead of 20).`);
+      triggerInput.focus();
+      return;
+    }
+    const diameterInput = field(card, 'wheelDiameterM');
+    if (diameterInput && diameterInput.value !== '' && !diameterInput.value.includes('.')) {
+      alert(`Wheel Diameter must be a decimal value (e.g., 0.915 instead of 1).`);
+      diameterInput.focus();
+      return;
     }
   }
 
@@ -1393,8 +1647,12 @@ async function saveCalibration(gatewayId) {
     },
   };
 
+  // Get searched train number from the search box (input id="trainNo")
+  const searchedTrainNo = (document.getElementById('trainNo') || {value: ''}).value.trim();
+  const trainNoParam = searchedTrainNo ? `?train_no=${encodeURIComponent(searchedTrainNo)}` : '';
+
   try {
-    const data = await requestJson(`/api/v1/calibration/${encodeURIComponent(gatewayId)}`, {
+    const data = await requestJson(`/api/v1/calibration/${encodeURIComponent(gatewayId)}${trainNoParam}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -1483,6 +1741,20 @@ async function loadDashboard(options = {}) {
     setStatus('Live', 'ok');
   } catch (error) {
     setStatus('Error', 'error');
+    
+    // Clear previous dashboard data
+    renderDashboard({ 
+      train: { trainNo: trainNo }, 
+      gateways: [], 
+      lastAlerts: [], 
+      archives: [], 
+      rmsPoints: [], 
+      mapAlerts: [],
+      userRole: window._userPerms?.role || 'operator',
+      permissions: window._userPerms?.perms || null
+    });
+    
+    // Show error message
     setHtml('gatewayList', `<p class="error-text">${error.message}</p>`);
   }
 }
@@ -1491,6 +1763,8 @@ async function resetSession() {
   const trainNo = trainNoValue();
   if (!trainNo) {
     alert('Please load a train first.');
+    // SR 65: Log validation failure
+    await logClientEvent('reset_session_validation_error', { errorMessage: 'Reset session attempted without a train loaded' });
     return;
   }
 
@@ -1499,6 +1773,8 @@ async function resetSession() {
   if (adminPwd === null) return; // user cancelled
   if (!adminPwd.trim()) {
     alert('Admin password is required.');
+    // SR 65: Log auth validation failure
+    await logClientEvent('reset_session_auth_error', { message: `Train ${trainNo}`, errorMessage: 'Admin password not provided for session reset' });
     return;
   }
 
@@ -1521,24 +1797,60 @@ async function resetSession() {
       `✅ ${data.message}\n\n${cmdText}\n\nGateways will receive the reset command on next heartbeat.`
     );
     setStatus('Reset', 'ok');
+    // SR 65: Log successful session reset
+    await logClientEvent('reset_session_success', { message: `Train ${trainNo} | ${cmds.length} gateway(s) queued` });
     await loadDashboard();
   } catch (error) {
     setStatus('Error', 'error');
     setText('resetOutput', `❌ Reset failed: ${error.message}`);
+    // SR 65: Log session reset error into Logs page
+    await logClientEvent('reset_session_error', { message: `Train ${trainNo}`, errorMessage: error.message });
   }
 }
 
 function selectTab(tabId) {
-  localStorage.setItem('activeTab', tabId);
+  // Fix 1: Immediate RBAC guard — block navigation to restricted tabs
+  // even before the first dashboard data loads, using perms cached by
+  // applyRoleBasedAccess() into window._userPerms.
+  const _p = window._userPerms;
+  if (_p) {
+    if (tabId === 'calibration' && _p.role !== 'admin' && !_p.perms.can_configure_thresholds) tabId = 'overview';
+    if (tabId === 'archives' && _p.role !== 'admin' && !_p.perms.can_view_archives) tabId = 'overview';
+    if (tabId === 'reset' && _p.role !== 'admin' && !_p.perms.can_reset_session) tabId = 'overview';
+    if (tabId === 'logs' && _p.role !== 'admin' && !_p.perms.can_view_logs) tabId = 'overview';
+    if (tabId === 'alarm_log_reports' && _p.role !== 'admin' && !_p.perms.can_view_reports) tabId = 'overview';
+    if (tabId === 'users' && !_p.perms.can_manage_users) tabId = 'alerts';
+    if (tabId === 'alerts' && !_p.perms.can_view_alerts) tabId = 'overview';
+  }
+  // Use sessionStorage so each browser tab tracks its own active tab independently
+  try { sessionStorage.setItem('activeTab', tabId); } catch(e) {}
+  try { localStorage.setItem('activeTab', tabId); } catch(e) {}
+  try {
+    // Map tabId to a clean path
+    const tabPathMap = { 'overview': '/dashboard', 'rolling_stock_graph': '/alert_graph' };
+    const tabPath = tabPathMap[tabId] || `/${tabId}`;
+    if (window.location.pathname !== tabPath) {
+      window.history.pushState({ tab: tabId }, '', tabPath);
+    }
+  } catch (e) {
+    console.error('Failed to update URL:', e);
+  }
   document.querySelectorAll('.tab').forEach((button) => button.classList.toggle('active', button.dataset.tab === tabId));
   document.querySelectorAll('.panel').forEach((panel) => panel.classList.toggle('active', panel.id === tabId));
   if (tabId === 'alerts') {
+    if (!maps[0] || !maps[1]) {
+      initializeMaps();
+      if (state.dashboard) {
+        renderMaps(state.dashboard.lastAlerts || [], state.dashboard.gateways || [], state.dashboard.rmsPoints || [], state.dashboard.mapAlerts || []);
+      }
+    }
     setTimeout(() => {
       Object.values(maps).forEach((map) => map?.invalidateSize());
     }, 120);
   }
   if (tabId === 'logs') loadLogs();
   if (tabId === 'users') loadUsersView();
+  if (tabId === 'routes_config') loadRoutesConfigView();
   if (tabId === 'rolling_stock_graph') {
     const currentTrain = trainNoValue();
     const graphRidEl = document.getElementById('graphRid');
@@ -1563,15 +1875,28 @@ async function applyRoleBasedAccess() {
       const userRole = (data.role || 'operator').toLowerCase();
       const perms = data.permissions || {};
       
-      const swaggerBtn = document.getElementById('swaggerBtn') || document.querySelector('a[href="/docs"]');
-      if (swaggerBtn) swaggerBtn.style.display = (userRole === 'admin') ? '' : 'none';
-      
+      const swaggerBtn = document.getElementById('swaggerBtn') || document.querySelector('a[href^="/docs"]');
+      if (swaggerBtn) {
+        swaggerBtn.style.display = (userRole === 'admin') ? '' : 'none';
+        const token = sessionStorage.getItem('uabams_session_token');
+        if (token) {
+          swaggerBtn.href = '/docs?session_token=' + encodeURIComponent(token);
+        }
+      }
       const usersLink = document.getElementById('dropdownUsersLink');
       if (usersLink) usersLink.style.display = perms.can_manage_users ? '' : 'none';
 
       document.querySelectorAll('.tab').forEach((button) => {
         const tabId = button.dataset.tab;
-        if (['calibration', 'archives', 'reset', 'logs'].includes(tabId) && userRole !== 'admin') {
+        if (tabId === 'calibration' && userRole !== 'admin' && !perms.can_configure_thresholds) {
+          button.style.display = 'none';
+        } else if (tabId === 'archives' && userRole !== 'admin' && !perms.can_view_archives) {
+          button.style.display = 'none';
+        } else if (tabId === 'reset' && userRole !== 'admin' && !perms.can_reset_session) {
+          button.style.display = 'none';
+        } else if (tabId === 'logs' && userRole !== 'admin' && !perms.can_view_logs) {
+          button.style.display = 'none';
+        } else if (tabId === 'alarm_log_reports' && userRole !== 'admin' && !perms.can_view_reports) {
           button.style.display = 'none';
         } else if (tabId === 'users' && !perms.can_manage_users) {
           button.style.display = 'none';
@@ -1579,14 +1904,16 @@ async function applyRoleBasedAccess() {
           button.style.display = 'none';
         }
       });
+      // Fix 1: Cache permissions so selectTab() can guard immediately on any click
+      window._userPerms = { role: userRole, perms };
     }
   } catch (err) {
     console.error('Failed to fetch user role', err);
   }
 }
 
-function boot() {
-  applyRoleBasedAccess();
+async function boot() {
+  await applyRoleBasedAccess();
   initializeMaps();
   buildCalibrationCards();
   updateGatewaySelector({});
@@ -1744,17 +2071,44 @@ function applyDateRangeConstraints(fromId, toId) {
   if (!fromInput || !toInput) return;
   
   const fromValue = fromInput.value;
-  if (!fromValue) return;
+  const toValue = toInput.value;
   
-  const fromDate = new Date(fromValue);
-  const maxDate = new Date(fromDate);
-  maxDate.setDate(maxDate.getDate() + APP_CONSTANTS.DATE.MAX_RANGE_DAYS);
-  
-  toInput.min = formatDateTimeLocal(fromDate);
-  toInput.max = formatDateTimeLocal(maxDate);
-  
-  if (toInput.value && new Date(toInput.value) > maxDate) {
-    toInput.value = formatDateTimeLocal(maxDate);
+  if (fromValue) {
+    const fromDate = new Date(fromValue);
+    const maxDate = new Date(fromDate);
+    maxDate.setDate(maxDate.getDate() + APP_CONSTANTS.DATE.MAX_RANGE_DAYS);
+    
+    toInput.min = formatDateTimeLocal(fromDate);
+    toInput.max = formatDateTimeLocal(maxDate);
+    
+    if (toValue) {
+      const tDate = new Date(toValue);
+      if (tDate < fromDate) {
+        toInput.value = formatDateTimeLocal(fromDate);
+      } else if (tDate > maxDate) {
+        toInput.value = formatDateTimeLocal(maxDate);
+      }
+    }
+  }
+
+  const currentToValue = toInput.value;
+  if (currentToValue) {
+    const toDate = new Date(currentToValue);
+    const minDate = new Date(toDate);
+    minDate.setDate(minDate.getDate() - APP_CONSTANTS.DATE.MAX_RANGE_DAYS);
+    
+    fromInput.max = formatDateTimeLocal(toDate);
+    fromInput.min = formatDateTimeLocal(minDate);
+    
+    const currentFromValue = fromInput.value;
+    if (currentFromValue) {
+      const fDate = new Date(currentFromValue);
+      if (fDate > toDate) {
+        fromInput.value = formatDateTimeLocal(toDate);
+      } else if (fDate < minDate) {
+        fromInput.value = formatDateTimeLocal(minDate);
+      }
+    }
   }
 }
 
@@ -2802,7 +3156,7 @@ if (addUserBtn) {
     document.getElementById('userId').value = '';
     document.getElementById('userUsername').readOnly = false;
     document.getElementById('userPassword').required = true;
-    userModal.style.display = 'block';
+    userModal.style.display = 'flex';
   });
 }
 
@@ -2828,6 +3182,10 @@ if (userForm) {
     const canViewAlerts = document.getElementById('userPermViewAlerts').checked;
     const canConfigureThresholds = document.getElementById('userPermConfigureThresholds').checked;
     const canManageUsers = document.getElementById('userPermManageUsers').checked;
+    const canViewArchives = document.getElementById('userPermViewArchives').checked;
+    const canResetSession = document.getElementById('userPermResetSession').checked;
+    const canViewLogs = document.getElementById('userPermViewLogs').checked;
+    const canViewReports = document.getElementById('userPermViewReports').checked;
     const isActive = document.getElementById('userIsActive').checked;
     const usernameRegex = /^[A-Za-z0-9_]+$/;
     const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@#$%!]).{8,}$/;
@@ -2850,6 +3208,10 @@ if (userForm) {
           can_view_alerts: canViewAlerts,
           can_configure_thresholds: canConfigureThresholds,
           can_manage_users: canManageUsers,
+          can_view_archives: canViewArchives,
+          can_reset_session: canResetSession,
+          can_view_logs: canViewLogs,
+          can_view_reports: canViewReports,
           is_active: isActive
         };
         if (password) payload.password = password;
@@ -2889,7 +3251,11 @@ if (userForm) {
             role,
             can_view_alerts: canViewAlerts,
             can_configure_thresholds: canConfigureThresholds,
-            can_manage_users: canManageUsers
+            can_manage_users: canManageUsers,
+            can_view_archives: canViewArchives,
+            can_reset_session: canResetSession,
+            can_view_logs: canViewLogs,
+            can_view_reports: canViewReports
           })
         }).then(async res => {
           if (!res.ok) throw new Error(await res.text());
@@ -2918,9 +3284,13 @@ if (userForm) {
   document.getElementById('userPermViewAlerts').checked = user.can_view_alerts;
   document.getElementById('userPermConfigureThresholds').checked = user.can_configure_thresholds;
   document.getElementById('userPermManageUsers').checked = user.can_manage_users;
+  document.getElementById('userPermViewArchives').checked = user.can_view_archives || false;
+  document.getElementById('userPermResetSession').checked = user.can_reset_session || false;
+  document.getElementById('userPermViewLogs').checked = user.can_view_logs || false;
+  document.getElementById('userPermViewReports').checked = user.can_view_reports || false;
   document.getElementById('userIsActive').checked = user.is_active;
   
-  userModal.style.display = 'block';
+  userModal.style.display = 'flex';
 };
 
 window.deleteUser = async function(id, username) {
@@ -2976,30 +3346,20 @@ function filterByAlertLevel(level) {
   } else {
     state.filterLevel = level;
   }
-  
+
   // Sync the dropdown if it exists so they stay consistent
   const dropdown = document.getElementById('filterLevel');
   if (dropdown) {
     dropdown.value = state.filterLevel || '';
   }
 
-  // Update UI active states
-  ['RED', 'YELLOW', 'GREEN', 'TOTAL'].forEach(lvl => {
-    const card = document.getElementById('card-' + lvl);
-    if (card) {
-      if (state.filterLevel === lvl || (state.filterLevel === null && lvl === 'TOTAL')) {
-        card.classList.add('card-active');
-      } else {
-        card.classList.remove('card-active');
-      }
-    }
-  });
-
-  // Re-render dashboard with new filter
+  // Re-render dashboard with new filter — renderAlertSummary() inside it
+  // will re-generate per-gateway cards with the correct card-active class.
   if (state.dashboard) {
     renderDashboard(state.dashboard);
   }
 }
+
 window.filterByAlertLevel = filterByAlertLevel;
 
 
@@ -3010,7 +3370,7 @@ async function loadHierarchyData(type, parentCode = null) {
       const param = type === 'divisions' ? 'zone_code' : 'division_code';
       url += `?${param}=${encodeURIComponent(parentCode)}`;
     }
-    const token = localStorage.getItem('uabams_token') || sessionStorage.getItem('uabams_token');
+    const token = sessionStorage.getItem('uabams_session_token');
     const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
     const res = await fetch(url, { headers });
     if (!res.ok) return [];
@@ -3034,9 +3394,27 @@ async function populateDropdown(selectId, type, parentCode = null, defaultText) 
   });
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  const savedTab = localStorage.getItem('activeTab') || 'overview';
+document.addEventListener('DOMContentLoaded', async () => {
+  await applyRoleBasedAccess();
+  // Reverse map: URL path -> tabId
+  const pathToTab = { 'dashboard': 'overview', 'alert_graph': 'rolling_stock_graph' };
+  function pathToTabId(pathname) {
+    const p = pathname.replace(/^\//,'').replace(/\/$/,'');
+    return pathToTab[p] || p || 'overview';
+  }
+  const savedTab = pathToTabId(window.location.pathname)
+    || sessionStorage.getItem('activeTab')
+    || localStorage.getItem('activeTab')
+    || 'overview';
   selectTab(savedTab);
+
+  window.addEventListener('popstate', (e) => {
+    if (e.state && e.state.tab) {
+      selectTab(e.state.tab);
+    } else {
+      selectTab(pathToTabId(window.location.pathname));
+    }
+  });
   initializeMaps();
   loadTrainList();
 
@@ -3107,3 +3485,210 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 
 
+// ==========================================
+// Route & Contact Configuration
+// ==========================================
+let currentEditingRoute = null;
+let currentEditingContact = null;
+
+async function loadRoutesConfigView() {
+  const routesTable = document.getElementById('routesTable');
+  const contactsTable = document.getElementById('contactsTable');
+  if (!routesTable || !contactsTable) return;
+  
+  try {
+    const [routesRes, contactsRes] = await Promise.all([
+      fetch('/api/v1/routes', { headers: { 'Authorization': `Bearer ${sessionStorage.getItem('uabams_session_token') || ''}` } }),
+      fetch('/api/v1/contacts', { headers: { 'Authorization': `Bearer ${sessionStorage.getItem('uabams_session_token') || ''}` } })
+    ]);
+    
+    if (routesRes.ok) {
+      const data = await routesRes.json();
+      const routes = data.routes || [];
+      window.allRoutes = routes; // save for contacts dropdown
+      routesTable.innerHTML = routes.map(r => `
+        <tr>
+          <td>${r.name}</td>
+          <td>${r.vertical_limit}V / ${r.lateral_limit}L</td>
+          <td>${new Date(r.created_at).toLocaleString()}</td>
+          <td>
+            <button class="secondary btn-sm" onclick='openEditRoute(${JSON.stringify(r).replace(/'/g, "&#39;")})'>Edit</button>
+            <button class="danger btn-sm" onclick="deleteRoute(${r.id}, '${r.name}')">Delete</button>
+          </td>
+        </tr>
+      `).join('') || '<tr><td colspan="4">No routes found.</td></tr>';
+    }
+    
+    if (contactsRes.ok) {
+      const data = await contactsRes.json();
+      const contacts = data.contacts || [];
+      contactsTable.innerHTML = contacts.map(c => {
+        const routeName = (window.allRoutes || []).find(r => r.id === c.route_id)?.name || 'Unknown';
+        return `
+        <tr>
+          <td>${c.name}</td>
+          <td>${c.mobile_number}</td>
+          <td>${routeName}</td>
+          <td>
+            <button class="secondary btn-sm" onclick='openEditContact(${JSON.stringify(c).replace(/'/g, "&#39;")})'>Edit</button>
+            <button class="danger btn-sm" onclick="deleteContact(${c.id}, '${c.name}')">Delete</button>
+          </td>
+        </tr>
+      `}).join('') || '<tr><td colspan="4">No contacts found.</td></tr>';
+    }
+  } catch (err) {
+    console.error('Failed to load routes/contacts', err);
+  }
+}
+
+document.getElementById('addRouteBtn')?.addEventListener('click', () => {
+  currentEditingRoute = null;
+  document.getElementById('routeModalTitle').textContent = 'Add Route';
+  document.getElementById('routeForm').reset();
+  document.getElementById('routeId').value = '';
+  document.getElementById('routeModal').style.display = 'flex';
+});
+
+document.getElementById('closeRouteModal')?.addEventListener('click', () => {
+  document.getElementById('routeModal').style.display = 'none';
+});
+
+window.openEditRoute = function(route) {
+  currentEditingRoute = route;
+  document.getElementById('routeModalTitle').textContent = 'Edit Route';
+  document.getElementById('routeId').value = route.id;
+  document.getElementById('routeName').value = route.name;
+  document.getElementById('routeVerticalLimit').value = route.vertical_limit;
+  document.getElementById('routeLateralLimit').value = route.lateral_limit;
+  document.getElementById('routeModal').style.display = 'flex';
+};
+
+document.getElementById('routeForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const id = document.getElementById('routeId').value;
+  const payload = {
+    name: document.getElementById('routeName').value,
+    vertical_limit: parseFloat(document.getElementById('routeVerticalLimit').value),
+    lateral_limit: parseFloat(document.getElementById('routeLateralLimit').value)
+  };
+  
+  const method = id ? 'PUT' : 'POST';
+  const url = id ? `/api/v1/routes/${id}` : '/api/v1/routes';
+  
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${sessionStorage.getItem('uabams_session_token') || ''}`
+      },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error(await res.text());
+    document.getElementById('routeModal').style.display = 'none';
+    loadRoutesConfigView();
+  } catch (err) {
+    alert(`Error saving route: ${err.message}`);
+  }
+});
+
+window.deleteRoute = async function(id, name) {
+  if (confirm(`Delete route "${name}"?`)) {
+    try {
+      const res = await fetch(`/api/v1/routes/${id}`, { 
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${sessionStorage.getItem('uabams_session_token') || ''}` }
+      });
+      if (!res.ok) throw new Error(await res.text());
+      loadRoutesConfigView();
+    } catch (err) {
+      alert(`Error deleting route: ${err.message}`);
+    }
+  }
+};
+
+document.getElementById('addContactBtn')?.addEventListener('click', () => {
+  currentEditingContact = null;
+  document.getElementById('contactModalTitle').textContent = 'Add Contact';
+  document.getElementById('contactForm').reset();
+  document.getElementById('contactId').value = '';
+  
+  const select = document.getElementById('contactRouteSelect');
+  select.innerHTML = '<option value="">Select Route</option>' + (window.allRoutes || []).map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+  
+  document.getElementById('contactModal').style.display = 'flex';
+});
+
+document.getElementById('closeContactModal')?.addEventListener('click', () => {
+  document.getElementById('contactModal').style.display = 'none';
+});
+
+window.openEditContact = function(contact) {
+  currentEditingContact = contact;
+  document.getElementById('contactModalTitle').textContent = 'Edit Contact';
+  document.getElementById('contactId').value = contact.id;
+  document.getElementById('contactName').value = contact.name;
+  document.getElementById('contactPhone').value = contact.mobile_number;
+  document.getElementById('contactDesignation').value = contact.designation || '';
+  document.getElementById('contactZone').value = contact.zone || '';
+  document.getElementById('contactDivision').value = contact.division || '';
+  document.getElementById('contactSection').value = contact.section || '';
+  document.getElementById('contactSmsEnabled').checked = contact.sms_enabled;
+  document.getElementById('contactActive').checked = contact.active;
+  
+  const select = document.getElementById('contactRouteSelect');
+  select.innerHTML = '<option value="">Select Route</option>' + (window.allRoutes || []).map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+  select.value = contact.route_id;
+  
+  document.getElementById('contactModal').style.display = 'flex';
+};
+
+document.getElementById('contactForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const id = document.getElementById('contactId').value;
+  const payload = {
+    name: document.getElementById('contactName').value,
+    mobile_number: document.getElementById('contactPhone').value,
+    designation: document.getElementById('contactDesignation').value,
+    zone: document.getElementById('contactZone').value,
+    division: document.getElementById('contactDivision').value,
+    section: document.getElementById('contactSection').value,
+    sms_enabled: document.getElementById('contactSmsEnabled').checked,
+    active: document.getElementById('contactActive').checked,
+    route_id: parseInt(document.getElementById('contactRouteSelect').value)
+  };
+  
+  const method = id ? 'PUT' : 'POST';
+  const url = id ? `/api/v1/contacts/${id}` : '/api/v1/contacts';
+  
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${sessionStorage.getItem('uabams_session_token') || ''}`
+      },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error(await res.text());
+    document.getElementById('contactModal').style.display = 'none';
+    loadRoutesConfigView();
+  } catch (err) {
+    alert(`Error saving contact: ${err.message}`);
+  }
+});
+
+window.deleteContact = async function(id, name) {
+  if (confirm(`Delete contact "${name}"?`)) {
+    try {
+      const res = await fetch(`/api/v1/contacts/${id}`, { 
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${sessionStorage.getItem('uabams_session_token') || ''}` }
+      });
+      if (!res.ok) throw new Error(await res.text());
+      loadRoutesConfigView();
+    } catch (err) {
+      alert(`Error deleting contact: ${err.message}`);
+    }
+  }
+};

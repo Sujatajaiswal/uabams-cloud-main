@@ -88,8 +88,42 @@ async def train_dashboard(train_no: str, request: Request):
             else:
                 train["trainName"] = "Express Train"
 
-        associated_gateways = await conn.fetch('SELECT gateway_id AS "gatewayId" FROM gateways WHERE train_id = $1 LIMIT 20', train_no)
-        gateway_ids = [g["gatewayId"] for g in associated_gateways if g.get("gatewayId")]
+        # --- Multi-source gateway discovery ---
+        # Source 1: gateway_train_assignments (populated by handshake with trainIdDirA/B)
+        gta_rows = await conn.fetch('''
+            SELECT gateway_id AS "gatewayId", logical_gateway_id AS "logicalGatewayId"
+            FROM gateway_train_assignments
+            WHERE train_id = $1 AND is_active = true
+        ''', train_no)
+        logical_id_map = {r["gatewayId"]: r["logicalGatewayId"] for r in gta_rows if r.get("gatewayId")}
+        # Source 2: gateway_status.train_id (updated by heartbeat payload via COALESCE)
+        gs_rows = await conn.fetch(
+            'SELECT gateway_id AS "gatewayId" FROM gateway_status WHERE train_id = $1 LIMIT 20', train_no
+        )
+        for r in gs_rows:
+            gid = r.get("gatewayId")
+            if gid and gid not in logical_id_map:
+                logical_id_map[gid] = None
+
+        # Source 3: heartbeat_logs (last resort — gateway sent heartbeats with trainId but no full handshake)
+        hb_rows = await conn.fetch('''
+            SELECT DISTINCT ON (gateway_id)
+                gateway_id AS "gatewayId",
+                logical_gateway_id AS "logicalGatewayId"
+            FROM heartbeat_logs
+            WHERE train_id = $1
+            ORDER BY gateway_id, received_at DESC
+            LIMIT 20
+        ''', train_no)
+        for r in hb_rows:
+            gid = r.get("gatewayId")
+            if gid:
+                if gid not in logical_id_map:
+                    logical_id_map[gid] = r.get("logicalGatewayId")
+                elif logical_id_map[gid] is None and r.get("logicalGatewayId"):
+                    logical_id_map[gid] = r.get("logicalGatewayId")
+
+        gateway_ids = list(logical_id_map.keys())
 
         statuses = []
         if gateway_ids:
@@ -153,6 +187,8 @@ async def train_dashboard(train_no: str, request: Request):
             card["latestAlert"] = fallback_alert
             card["latestLatitude"] = latest_peak.get("latitude") if latest_peak else latest_rms.get("latitude") if latest_rms else None
             card["latestLongitude"] = latest_peak.get("longitude") if latest_peak else latest_rms.get("longitude") if latest_rms else None
+            # Include logicalGatewayId so the UI can display the directional identity
+            card["logicalGatewayId"] = logical_id_map.get(gateway_id)
 
             gateway_cards.append(card)
 
@@ -225,12 +261,32 @@ async def train_dashboard(train_no: str, request: Request):
             display_train["trainNo"] = display_train["trainNo"].replace("TR_", "")
 
         payload = operator_session_payload(request)
+        username = payload.get("sub") if payload else None
+        
         role = payload.get("role", "operator") if payload else "operator"
         permissions = {
             "can_configure_thresholds": payload.get("can_configure_thresholds", False) if payload else False,
             "can_manage_users": payload.get("can_manage_users", False) if payload else False,
             "can_view_alerts": payload.get("can_view_alerts", True) if payload else True,
+            "can_view_archives": payload.get("can_view_archives", False) if payload else False,
+            "can_reset_session": payload.get("can_reset_session", False) if payload else False,
+            "can_view_logs": payload.get("can_view_logs", False) if payload else False,
+            "can_view_reports": payload.get("can_view_reports", False) if payload else False,
         }
+        
+        if username:
+            user_record = await conn.fetchrow("SELECT * FROM users WHERE username = $1", username)
+            if user_record:
+                role = user_record['role'].lower()
+                permissions = {
+                    "can_configure_thresholds": user_record.get("can_configure_thresholds", False),
+                    "can_manage_users": user_record.get("can_manage_users", False),
+                    "can_view_alerts": user_record.get("can_view_alerts", True),
+                    "can_view_archives": user_record.get("can_view_archives", False),
+                    "can_reset_session": user_record.get("can_reset_session", False),
+                    "can_view_logs": user_record.get("can_view_logs", False),
+                    "can_view_reports": user_record.get("can_view_reports", False)
+                }
         
         return {
             "train": serialize(display_train),

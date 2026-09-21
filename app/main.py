@@ -142,8 +142,25 @@ def apply_wheel_compensation(
         compensate_position(record, "windowEndMm")
         compensate_position(record, "positionMm")
         compensate_speed(record)
+        if record.get("windowStartMm") is not None:
+            record["startKm"] = round(record["windowStartMm"] / 1000000.0, 5)
+        if record.get("windowEndMm") is not None:
+            record["endKm"] = round(record["windowEndMm"] / 1000000.0, 5)
+        if record.get("positionMm") is not None:
+            record["locationKm"] = round(record["positionMm"] / 1000000.0, 5)
+        for spd_field in ("avgSpeedKmph", "minSpeedKmph", "maxSpeedKmph"):
+            if record.get(spd_field) is not None:
+                record[f"raw{spd_field[0].upper()}{spd_field[1:]}"] = record[spd_field]
+                record[spd_field] = round(float(record[spd_field]) * combined_factor, 2)
         for axis in record.get("axes", {}).values():
             compensate_position(axis, "peakPositionMm")
+            if axis.get("peakPositionMm") is not None:
+                axis["positionMm"] = axis["peakPositionMm"]
+                axis["locationKm"] = round(axis["positionMm"] / 1000000.0, 5)
+            if axis.get("peakSpeedKmph") is not None:
+                axis["rawPeakSpeedKmph"] = axis["peakSpeedKmph"]
+                axis["peakSpeedKmph"] = round(float(axis["peakSpeedKmph"]) * combined_factor, 2)
+                axis["speedKmph"] = axis["peakSpeedKmph"]
         record["wheelCompensationFactor"] = round(combined_factor, 6)
 
     return {
@@ -257,7 +274,20 @@ def create_operator_session(username: str, role: str = "operator", perms: dict =
 
 
 def operator_session_payload(request: Request) -> dict[str, Any] | None:
-    token = request.cookies.get(OPERATOR_COOKIE_NAME)
+    token = None
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+    elif request.headers.get("X-Session-Token"):
+        token = request.headers.get("X-Session-Token")
+    else:
+        try:
+            token = request.query_params.get("session_token")
+        except (KeyError, AttributeError):
+            token = None
+        if not token:
+            token = request.cookies.get(OPERATOR_COOKIE_NAME)
+
     if not token:
         return None
     try:
@@ -447,11 +477,64 @@ async def startup() -> None:
                 # ── Schema: complete table definitions ─────────────────────
                 await conn.execute("""
                     -- ── Core reference tables ────────────────────────────────
+                    CREATE TABLE IF NOT EXISTS routes (
+                        id         SERIAL PRIMARY KEY,
+                        name       VARCHAR(255) UNIQUE NOT NULL,
+                        vertical_limit DOUBLE PRECISION DEFAULT 50.0,
+                        lateral_limit DOUBLE PRECISION DEFAULT 80.0,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    );
+                    ALTER TABLE routes ADD COLUMN IF NOT EXISTS vertical_limit DOUBLE PRECISION DEFAULT 50.0;
+                    ALTER TABLE routes ADD COLUMN IF NOT EXISTS lateral_limit DOUBLE PRECISION DEFAULT 80.0;
+
+                    CREATE TABLE IF NOT EXISTS contacts (
+                        id           SERIAL PRIMARY KEY,
+                        name         VARCHAR(255) NOT NULL,
+                        mobile_number VARCHAR(50) NOT NULL,
+                        designation  VARCHAR(100),
+                        zone         VARCHAR(100),
+                        division     VARCHAR(100),
+                        section      VARCHAR(100),
+                        route_id     INTEGER REFERENCES routes(id) ON DELETE CASCADE,
+                        sms_enabled  BOOLEAN DEFAULT TRUE,
+                        active       BOOLEAN DEFAULT TRUE,
+                        created_at   TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    );
+                    ALTER TABLE contacts RENAME COLUMN phone_number TO mobile_number;
+                    ALTER TABLE contacts ADD COLUMN IF NOT EXISTS designation VARCHAR(100);
+                    ALTER TABLE contacts ADD COLUMN IF NOT EXISTS zone VARCHAR(100);
+                    ALTER TABLE contacts ADD COLUMN IF NOT EXISTS division VARCHAR(100);
+                    ALTER TABLE contacts ADD COLUMN IF NOT EXISTS section VARCHAR(100);
+                    ALTER TABLE contacts ADD COLUMN IF NOT EXISTS sms_enabled BOOLEAN DEFAULT TRUE;
+                    ALTER TABLE contacts ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE;
+
+                    CREATE TABLE IF NOT EXISTS alert_notifications (
+                        id                SERIAL PRIMARY KEY,
+                        alert_id          INTEGER NOT NULL,
+                        contact_id        INTEGER NOT NULL,
+                        notification_type VARCHAR(50) NOT NULL,
+                        status            VARCHAR(50) NOT NULL,
+                        failure_reason    TEXT,
+                        sent_at           TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    );
+
+                    CREATE TABLE IF NOT EXISTS threshold_audit_logs (
+                        id         SERIAL PRIMARY KEY,
+                        route_id   INTEGER REFERENCES routes(id) ON DELETE CASCADE,
+                        parameter  VARCHAR(50) NOT NULL,
+                        old_value  DOUBLE PRECISION,
+                        new_value  DOUBLE PRECISION,
+                        changed_by VARCHAR(255),
+                        changed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    );
+
                     CREATE TABLE IF NOT EXISTS trains (
                         train_no   VARCHAR(50)  PRIMARY KEY,
                         train_name VARCHAR(255) NOT NULL,
+                        route_id   INTEGER REFERENCES routes(id) ON DELETE SET NULL,
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                     );
+                    ALTER TABLE trains ADD COLUMN IF NOT EXISTS route_id INTEGER REFERENCES routes(id) ON DELETE SET NULL;
 
                     CREATE TABLE IF NOT EXISTS gateways (
                         gateway_id       VARCHAR(100) PRIMARY KEY,
@@ -646,17 +729,27 @@ async def startup() -> None:
                     ALTER TABLE rms_records DROP COLUMN IF EXISTS bg_z_mg;
 
                     CREATE TABLE IF NOT EXISTS peak_records (
-                        id              SERIAL PRIMARY KEY,
-                        train_id        VARCHAR(50),
-                        gateway_id      VARCHAR(100),
-                        archive_sha256  VARCHAR(64),
-                        window_start_mm INTEGER,
-                        position_mm     INTEGER,
-                        speed_kmph      DOUBLE PRECISION,
-                        latitude        DOUBLE PRECISION,
-                        longitude       DOUBLE PRECISION,
-                        axes            JSONB,
-                        created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                        id                 SERIAL PRIMARY KEY,
+                        train_id           VARCHAR(50),
+                        gateway_id         VARCHAR(100),
+                        logical_gateway_id VARCHAR(100),
+                        archive_sha256     VARCHAR(64),
+                        window_start_mm    INTEGER,
+                        window_end_mm      INTEGER,
+                        position_mm        INTEGER,
+                        start_km           DOUBLE PRECISION,
+                        end_km             DOUBLE PRECISION,
+                        speed_kmph         DOUBLE PRECISION,
+                        avg_speed_kmph     DOUBLE PRECISION,
+                        min_speed_kmph     DOUBLE PRECISION,
+                        max_speed_kmph     DOUBLE PRECISION,
+                        valid_mask         INTEGER,
+                        alert_generated    BOOLEAN,
+                        alerts_count       INTEGER,
+                        latitude           DOUBLE PRECISION,
+                        longitude          DOUBLE PRECISION,
+                        axes               JSONB,
+                        created_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                     );
 
                     CREATE TABLE IF NOT EXISTS fault_records (
@@ -670,27 +763,56 @@ async def startup() -> None:
                         created_at     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                     );
 
+                    CREATE TABLE IF NOT EXISTS window_alerts (
+                        id                  SERIAL PRIMARY KEY,
+                        gateway_id          VARCHAR(100),
+                        logical_gateway_id  VARCHAR(100),
+                        train_no            VARCHAR(50),
+                        session_name        VARCHAR(100),
+                        timestamp_utc_ms    BIGINT,
+                        start_km            DOUBLE PRECISION,
+                        end_km              DOUBLE PRECISION,
+                        speed_kmph          DOUBLE PRECISION,
+                        min_speed_kmph      DOUBLE PRECISION,
+                        max_speed_kmph      DOUBLE PRECISION,
+                        alerts_count        INTEGER,
+                        created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    );
+
                     CREATE TABLE IF NOT EXISTS alert_events (
-                        id             SERIAL PRIMARY KEY,
-                        train_no       VARCHAR(50),
-                        gateway_id     VARCHAR(100),
-                        alert_type     VARCHAR(20),
-                        latitude       DOUBLE PRECISION,
-                        longitude      DOUBLE PRECISION,
-                        position_mm    INTEGER,
-                        session_name   VARCHAR(100),
-                        archive_sha256 VARCHAR(64),
-                        source         VARCHAR(50),
-                        peak_axis      VARCHAR(10),
-                        peak_value_g   DOUBLE PRECISION,
-                        speed_kmph     DOUBLE PRECISION,
-                        alert          VARCHAR(20),
-                        session_status VARCHAR(50) DEFAULT 'active',
-                        zone           VARCHAR(100),
-                        division       VARCHAR(100),
-                        section        VARCHAR(100),
-                        archived_at    TIMESTAMP WITH TIME ZONE,
-                        created_at     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                        id                 SERIAL PRIMARY KEY,
+                        train_no           VARCHAR(50),
+                        gateway_id         VARCHAR(100),
+                        logical_gateway_id VARCHAR(100),
+                        alert_type         VARCHAR(20),
+                        sensor             VARCHAR(50),
+                        axis               VARCHAR(10),
+                        channel            VARCHAR(20),
+                        latitude           DOUBLE PRECISION,
+                        longitude          DOUBLE PRECISION,
+                        position_mm        INTEGER,
+                        location_km        DOUBLE PRECISION,
+                        start_km           DOUBLE PRECISION,
+                        end_km             DOUBLE PRECISION,
+                        session_name       VARCHAR(100),
+                        archive_sha256     VARCHAR(64),
+                        source             VARCHAR(50),
+                        peak_axis          VARCHAR(10),
+                        peak_value_g       DOUBLE PRECISION,
+                        threshold_g        DOUBLE PRECISION,
+                        speed_kmph         DOUBLE PRECISION,
+                        window_speed_kmph  DOUBLE PRECISION,
+                        min_speed_kmph     DOUBLE PRECISION,
+                        max_speed_kmph     DOUBLE PRECISION,
+                        alerts_count       INTEGER,
+                        window_alert_id    INTEGER,
+                        alert              VARCHAR(20),
+                        session_status     VARCHAR(50) DEFAULT 'active',
+                        zone               VARCHAR(100),
+                        division           VARCHAR(100),
+                        section            VARCHAR(100),
+                        archived_at        TIMESTAMP WITH TIME ZONE,
+                        created_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                     );
 
                     -- ── Operational tables ────────────────────────────────────
@@ -883,8 +1005,32 @@ async def startup() -> None:
                     ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS division       VARCHAR(100);
                     ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS section        VARCHAR(100);
 
+                    ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS sensor             VARCHAR(50);
+                    ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS axis               VARCHAR(10);
+                    ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS channel            VARCHAR(20);
+                    ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS threshold_g        DOUBLE PRECISION;
+                    ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS location_km        DOUBLE PRECISION;
+                    ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS start_km           DOUBLE PRECISION;
+                    ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS end_km             DOUBLE PRECISION;
+                    ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS window_speed_kmph  DOUBLE PRECISION;
+                    ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS min_speed_kmph     DOUBLE PRECISION;
+                    ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS max_speed_kmph     DOUBLE PRECISION;
+                    ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS alerts_count       INTEGER;
+                    ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS window_alert_id    INTEGER;
+
                     ALTER TABLE archives ADD COLUMN IF NOT EXISTS train_id VARCHAR(50);
 
+                    ALTER TABLE peak_records ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    ALTER TABLE peak_records ADD COLUMN IF NOT EXISTS window_end_mm      INTEGER;
+                    ALTER TABLE peak_records ADD COLUMN IF NOT EXISTS start_km           DOUBLE PRECISION;
+                    ALTER TABLE peak_records ADD COLUMN IF NOT EXISTS end_km             DOUBLE PRECISION;
+                    ALTER TABLE peak_records ADD COLUMN IF NOT EXISTS avg_speed_kmph     DOUBLE PRECISION;
+                    ALTER TABLE peak_records ADD COLUMN IF NOT EXISTS min_speed_kmph     DOUBLE PRECISION;
+                    ALTER TABLE peak_records ADD COLUMN IF NOT EXISTS max_speed_kmph     DOUBLE PRECISION;
+                    ALTER TABLE peak_records ADD COLUMN IF NOT EXISTS valid_mask         INTEGER;
+                    ALTER TABLE peak_records ADD COLUMN IF NOT EXISTS alert_generated     BOOLEAN;
+                    ALTER TABLE peak_records ADD COLUMN IF NOT EXISTS alerts_count       INTEGER;
                     ALTER TABLE peak_records ADD COLUMN IF NOT EXISTS position_mm INTEGER;
                     ALTER TABLE peak_records ADD COLUMN IF NOT EXISTS speed_kmph  DOUBLE PRECISION;
                     ALTER TABLE peak_records ADD COLUMN IF NOT EXISTS latitude    DOUBLE PRECISION;
@@ -1063,13 +1209,25 @@ async def startup() -> None:
                         can_configure_thresholds BOOLEAN DEFAULT FALSE,
                         can_manage_users BOOLEAN DEFAULT FALSE,
                         can_view_alerts BOOLEAN DEFAULT TRUE,
+                        can_view_archives BOOLEAN DEFAULT FALSE,
+                        can_reset_session BOOLEAN DEFAULT FALSE,
+                        can_view_logs BOOLEAN DEFAULT FALSE,
+                        can_view_reports BOOLEAN DEFAULT FALSE,
                         is_active BOOLEAN DEFAULT TRUE,
-                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        failed_login_attempts INT DEFAULT 0,
+                        locked_until TIMESTAMP WITH TIME ZONE DEFAULT NULL
                     );
 
                     ALTER TABLE users ADD COLUMN IF NOT EXISTS can_configure_thresholds BOOLEAN DEFAULT FALSE;
                     ALTER TABLE users ADD COLUMN IF NOT EXISTS can_manage_users BOOLEAN DEFAULT FALSE;
                     ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_alerts BOOLEAN DEFAULT TRUE;
+                    ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_archives BOOLEAN DEFAULT FALSE;
+                    ALTER TABLE users ADD COLUMN IF NOT EXISTS can_reset_session BOOLEAN DEFAULT FALSE;
+                    ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_logs BOOLEAN DEFAULT FALSE;
+                    ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_reports BOOLEAN DEFAULT FALSE;
+                    ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INT DEFAULT 0;
+                    ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP WITH TIME ZONE DEFAULT NULL;
                 """)
 
                 # ── Foreign key constraints ───────────────────────────────
@@ -1119,6 +1277,11 @@ async def startup() -> None:
                     CREATE INDEX IF NOT EXISTS idx_alert_gateway_id    ON alert_events(gateway_id);
                     CREATE INDEX IF NOT EXISTS idx_alert_created_at    ON alert_events(created_at DESC);
                     CREATE INDEX IF NOT EXISTS idx_alert_train_created ON alert_events(train_no, created_at DESC);
+
+                    -- window_alerts
+                    CREATE INDEX IF NOT EXISTS idx_window_alerts_train_no   ON window_alerts(train_no);
+                    CREATE INDEX IF NOT EXISTS idx_window_alerts_gateway_id ON window_alerts(gateway_id);
+                    CREATE INDEX IF NOT EXISTS idx_window_alerts_created_at ON window_alerts(created_at DESC);
 
                     -- rms_records (most critical — drives every map render)
                     CREATE INDEX IF NOT EXISTS idx_rms_gateway_id     ON rms_records(gateway_id);
@@ -1282,7 +1445,7 @@ async def startup() -> None:
         except Exception as seed_exc:
             print(f"Error seeding test data: {seed_exc}")
 
-from app.routers import auth, telemetry, gateways, hierarchy, ui, logs
+from app.routers import auth, telemetry, gateways, hierarchy, ui, logs, routes_config
 
 app.include_router(ui.router)
 app.include_router(auth.router)
@@ -1290,3 +1453,4 @@ app.include_router(logs.router)
 app.include_router(gateways.router)
 app.include_router(telemetry.router)
 app.include_router(hierarchy.router)
+app.include_router(routes_config.router)

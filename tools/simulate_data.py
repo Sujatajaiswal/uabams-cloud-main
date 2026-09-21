@@ -22,8 +22,9 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 RMS_FORMAT = "<Qifdd?B9f"
-PEAK_HEADER_FORMAT = "<iifB?"
-PEAK_AXIS_FORMAT = "<fIQdd"
+PEAK_HEADER_FORMAT = "<ii3f4B"  # 24 bytes
+PEAK_AXIS_FORMAT = "<fifQdd"    # 36 bytes
+RECORD_SIZE = 24 + (9 * 36)     # 348 bytes
 FAULT_FORMAT = "<QBBB64s"
 AXIS_COUNT = 9
 
@@ -73,18 +74,49 @@ def build_peak(upload_index: int, records: int, demo_alert: bool = False, demo_c
     for i in range(records):
         window_start = upload_index * 50000 + i * 50000
         window_end = window_start + 50000
+        avg_speed = random.uniform(75, 105)
+        min_speed = avg_speed - random.uniform(0.5, 3.0)
+        max_speed = avg_speed + random.uniform(0.5, 3.0)
         if demo_clean:
-            if i == 0: max_g = 85.0
-            elif i == 1: max_g = 60.0
-            else: max_g = 30.0
+            if i == 0:
+                max_g = 85.0
+            elif i == 1:
+                max_g = 60.0
+            else:
+                max_g = 30.0
         else:
             max_g = 92.0 if demo_alert and i == 0 else severity_peak(upload_index, i * 3)
-        alert_generated = max_g > 80
-        output += struct.pack(PEAK_HEADER_FORMAT, window_start, window_end, random.uniform(75, 105), 0xFF, alert_generated)
+
+        alert_generated = 1 if max_g > 80 else 0
+        alerts_count = 1 if max_g > 80 else 0
+        valid_mask = 0x07  # 0x01 AL, 0x02 AR, 0x04 BG
+        reserved = 0
+
+        output += struct.pack(
+            PEAK_HEADER_FORMAT,
+            window_start,
+            window_end,
+            avg_speed,
+            min_speed,
+            max_speed,
+            valid_mask,
+            alert_generated,
+            alerts_count,
+            reserved,
+        )
         for axis in range(AXIS_COUNT):
             peak_g = max_g if axis == 0 else random.uniform(2, max(3, max_g * 0.35))
+            peak_speed = avg_speed + random.uniform(-1.0, 1.0)
             lat, lon = route_point(i * 4 + axis, 30, upload_index)
-            output += struct.pack(PEAK_AXIS_FORMAT, peak_g, window_start + axis * 500, upload_index * 100000 + i, lat, lon)
+            output += struct.pack(
+                PEAK_AXIS_FORMAT,
+                peak_g,
+                window_start + axis * 500,
+                peak_speed,
+                upload_index * 100000 + i,
+                lat,
+                lon,
+            )
     return bytes(output)
 
 

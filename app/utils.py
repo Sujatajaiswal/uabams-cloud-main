@@ -1,6 +1,9 @@
 from datetime import UTC, datetime, timedelta
 import json
 import os
+import urllib.parse
+import urllib.request
+import urllib.error
 import jwt
 from typing import Any
 from fastapi import Request
@@ -55,7 +58,20 @@ def create_operator_session(username: str, role: str = "operator", perms: dict =
     return jwt.encode(payload, settings["jwt_secret"], algorithm=settings["jwt_algorithm"])
 
 def operator_session_payload(request: Request) -> dict[str, Any] | None:
-    token = request.cookies.get(OPERATOR_COOKIE_NAME)
+    token = None
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+    elif request.headers.get("X-Session-Token"):
+        token = request.headers.get("X-Session-Token")
+    else:
+        try:
+            token = request.query_params.get("session_token")
+        except (KeyError, AttributeError):
+            token = None
+        if not token:
+            token = request.cookies.get(OPERATOR_COOKIE_NAME)
+
     if not token:
         return None
     try:
@@ -65,6 +81,25 @@ def operator_session_payload(request: Request) -> dict[str, Any] | None:
 
 def is_operator_authenticated(request: Request) -> bool:
     return operator_session_payload(request) is not None
+
+def send_sms(mobile_number: str, message: str) -> tuple[bool, str]:
+    """
+    Mock SMS dispatch. 
+    Will be replaced with company API later.
+    """
+    print(f"[SMS DISPATCH] To {mobile_number}: {message}")
+    
+    # Mock successful dispatch
+    # Later replace this block with the actual company API integration
+    success = True
+    reason = ""
+    
+    if success:
+        print(f"[SMS] Successfully sent to {mobile_number}")
+        return True, ""
+    else:
+        print(f"[SMS] Failed to send to {mobile_number}")
+        return False, "API not implemented"
 
 def is_admin_authenticated(request: Request) -> bool:
     payload = operator_session_payload(request)
@@ -130,6 +165,7 @@ def render_login_page(error: str = ""):
   <script>
     try {
       localStorage.removeItem('activeTab');
+      sessionStorage.removeItem('activeTab');
     } catch (e) {}
     const togglePassword = document.querySelector('#toggle-password');
     const password = document.querySelector('#password');
@@ -137,6 +173,46 @@ def render_login_page(error: str = ""):
       const type = password.getAttribute('type') === 'password' ? 'text' : 'password';
       password.setAttribute('type', type);
     });
+
+    const loginForm = document.querySelector('form');
+    if (loginForm) {
+      loginForm.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const btn = loginForm.querySelector('.login-btn');
+        if (btn) btn.disabled = true;
+        try {
+          const formData = new URLSearchParams(new FormData(loginForm));
+          const res = await fetch('/login', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: formData
+          });
+          const data = await res.json();
+          if (data && data.status === 'success' && data.token) {
+            sessionStorage.setItem('uabams_session_token', data.token);
+            sessionStorage.setItem('uabams_user_role', data.role || '');
+            sessionStorage.setItem('uabams_username', data.username || '');
+            sessionStorage.setItem('activeTab', 'overview');
+            window.location.href = data.redirect || ('/dashboard?session_token=' + encodeURIComponent(data.token));
+          } else {
+            let errBox = document.querySelector('.alert-error');
+            if (!errBox) {
+              errBox = document.createElement('div');
+              errBox.className = 'alert alert-error';
+              loginForm.parentNode.insertBefore(errBox, loginForm);
+            }
+            errBox.textContent = (data && (data.message || data.detail)) || 'Invalid username or password';
+            if (btn) btn.disabled = false;
+          }
+        } catch (err) {
+          loginForm.submit();
+        }
+      });
+    }
   </script>
 </body>
 </html>""".replace("{error_html}", error_html)
@@ -234,8 +310,25 @@ def apply_wheel_compensation(
         compensate_position(record, "windowEndMm")
         compensate_position(record, "positionMm")
         compensate_speed(record)
+        if record.get("windowStartMm") is not None:
+            record["startKm"] = round(record["windowStartMm"] / 1000000.0, 5)
+        if record.get("windowEndMm") is not None:
+            record["endKm"] = round(record["windowEndMm"] / 1000000.0, 5)
+        if record.get("positionMm") is not None:
+            record["locationKm"] = round(record["positionMm"] / 1000000.0, 5)
+        for spd_field in ("avgSpeedKmph", "minSpeedKmph", "maxSpeedKmph"):
+            if record.get(spd_field) is not None:
+                record[f"raw{spd_field[0].upper()}{spd_field[1:]}"] = record[spd_field]
+                record[spd_field] = round(float(record[spd_field]) * combined_factor, 2)
         for axis in record.get("axes", {}).values():
             compensate_position(axis, "peakPositionMm")
+            if axis.get("peakPositionMm") is not None:
+                axis["positionMm"] = axis["peakPositionMm"]
+                axis["locationKm"] = round(axis["positionMm"] / 1000000.0, 5)
+            if axis.get("peakSpeedKmph") is not None:
+                axis["rawPeakSpeedKmph"] = axis["peakSpeedKmph"]
+                axis["peakSpeedKmph"] = round(float(axis["peakSpeedKmph"]) * combined_factor, 2)
+                axis["speedKmph"] = axis["peakSpeedKmph"]
         record["wheelCompensationFactor"] = round(combined_factor, 6)
 
     return {

@@ -44,13 +44,33 @@ class AuthRequest(BaseModel):
     sessionId: str = Field(..., examples=["sessionId"])
 
 
+class NodeStatus(BaseModel):
+    status: Literal["PENDING", "IN_PROGRESS", "COMMITTED", "FAILED"]
+    committedVersion: int
+    targetVersion: int
+    valuesChanged: bool
+    error: str | None = None
+
+
+class CalibrationNodes(BaseModel):
+    adxlLeft: NodeStatus | None = None
+    adxlRight: NodeStatus | None = None
+    bogie: NodeStatus | None = None
+    encoder: NodeStatus | None = None
+
+
 class CommandResultItem(BaseModel):
     commandId: str
     type: Literal["reset", "calibration_update"]
-    status: Literal["success", "failed"]
+    status: Literal["success", "failed", "staged", "partial_success", "ignored"]
     completedAt: datetime | None = None
     location: dict | None = None
     details: dict | None = None
+    reason: str | None = None
+    nodes: CalibrationNodes | None = None
+
+    class Config:
+        extra = "ignore"
 
 
 class HeartbeatRequest(BaseModel):
@@ -86,13 +106,31 @@ class CalibrationUpdateRequest(BaseModel):
     encoder: dict | None = None
 
 
+class AxisAlertItem(BaseModel):
+    sensor: str = Field(..., description="Sensor identity: AXLE_LEFT, AXLE_RIGHT, BOGIE")
+    axis: str = Field(..., description="Axis: X, Y, Z")
+    channel: str = Field(..., description="Channel: AL_X, AL_Y, AL_Z, AR_X, AR_Y, AR_Z, BG_X, BG_Y, BG_Z")
+    peakValueG: float = Field(..., description="Acceleration peak in g, 4 decimal places")
+    thresholdG: float = Field(..., description="Configured threshold in g, 4 decimal places")
+    speedKmph: float = Field(..., description="Train speed at the exact moment of this axis peak, 2 decimal places")
+    locationKm: float = Field(..., description="Chainage from start in km, 5 decimal places = 1 cm accuracy")
+    latitude: float = Field(..., description="GPS Latitude of peak, 6 decimal places")
+    longitude: float = Field(..., description="GPS Longitude of peak, 6 decimal places")
+
+
 class AlertRequest(BaseModel):
-    gatewayId: str | None = None
-    logicalGatewayId: str | None = None
-    trainNo: str | None = None
-    latitude: float
-    longitude: float
-    peakValueG: float
+    gatewayId: str = Field(..., description="Physical Gateway ID, e.g. GW1_PIL_BOGIE_01")
+    logicalGatewayId: str | None = Field(None, description="Directional Gateway ID, e.g. GW1_22151_BOGIE_01")
+    trainNo: str = Field(..., description="Train Number, e.g. 22151")
+    sessionName: str = Field(..., description="Active Session Name, e.g. 20260911_111245_22151_UP")
+    timestampUtcMs: int = Field(..., description="Unix timestamp in ms")
+    startKm: float = Field(..., description="Window start in km, 5 decimal places for 1 cm accuracy")
+    endKm: float = Field(..., description="Window end in km, 5 decimal places for 1 cm accuracy")
+    speedKmph: float = Field(..., description="Window average speed in km/h, 2 decimal places")
+    minSpeedKmph: float = Field(..., description="Window min speed in km/h, 2 decimal places")
+    maxSpeedKmph: float = Field(..., description="Window max speed in km/h, 2 decimal places")
+    alertsCount: int = Field(..., description="Total count of exceeded axes in this window")
+    alerts: list[AxisAlertItem] = Field(default_factory=list, description="Array of exceeded axes")
 
 
 class ResetSessionRequest(BaseModel):
@@ -166,6 +204,10 @@ class UserCreateRequest(BaseModel):
     can_configure_thresholds: bool = False
     can_manage_users: bool = False
     can_view_alerts: bool = True
+    can_view_archives: bool = False
+    can_reset_session: bool = False
+    can_view_logs: bool = False
+    can_view_reports: bool = False
 
 class UserUpdateRequest(BaseModel):
     username: str | None = None
@@ -175,3 +217,7 @@ class UserUpdateRequest(BaseModel):
     can_configure_thresholds: bool | None = None
     can_manage_users: bool | None = None
     can_view_alerts: bool | None = None
+    can_view_archives: bool | None = None
+    can_reset_session: bool | None = None
+    can_view_logs: bool | None = None
+    can_view_reports: bool | None = None

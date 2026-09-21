@@ -20,8 +20,9 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 # Constants matching UABAMS binary protocols
 RMS_FORMAT = "<Qifdd?B9f"
-PEAK_HEADER_FORMAT = "<iifB?"
-PEAK_AXIS_FORMAT = "<fIQdd"
+PEAK_HEADER_FORMAT = "<ii3f4B"  # 24 bytes
+PEAK_AXIS_FORMAT = "<fifQdd"    # 36 bytes
+RECORD_SIZE = 24 + (9 * 36)     # 348 bytes
 FAULT_FORMAT = "<QBBB64s"
 AXIS_COUNT = 9
 
@@ -71,6 +72,9 @@ def build_peak(train_idx: int, records: int) -> bytes:
     for i in range(num_records):
         window_start = i * 50000
         window_end = window_start + 50000
+        avg_speed = random.uniform(75, 105)
+        min_speed = avg_speed - random.uniform(0.5, 3.0)
+        max_speed = avg_speed + random.uniform(0.5, 3.0)
         
         scenario = train_idx % 6
         if scenario == 0:
@@ -92,12 +96,36 @@ def build_peak(train_idx: int, records: int) -> bytes:
             # GREEN only
             max_g = random.uniform(15, 45)
             
-        alert_generated = True
-        output += struct.pack(PEAK_HEADER_FORMAT, window_start, window_end, random.uniform(75, 105), 0xFF, alert_generated)
+        alert_generated = 1 if max_g > 50 else 0
+        alerts_count = 1 if max_g > 50 else 0
+        valid_mask = 0x07
+        reserved = 0
+
+        output += struct.pack(
+            PEAK_HEADER_FORMAT,
+            window_start,
+            window_end,
+            avg_speed,
+            min_speed,
+            max_speed,
+            valid_mask,
+            alert_generated,
+            alerts_count,
+            reserved,
+        )
         for axis in range(AXIS_COUNT):
             peak_g = max_g if axis == 0 else random.uniform(2, max_g * 0.35)
+            peak_speed = avg_speed + random.uniform(-1.0, 1.0)
             lat, lon = route_point(i, num_records, train_idx)
-            output += struct.pack(PEAK_AXIS_FORMAT, peak_g, window_start + axis * 500, i, lat, lon)
+            output += struct.pack(
+                PEAK_AXIS_FORMAT,
+                peak_g,
+                window_start + axis * 500,
+                peak_speed,
+                i,
+                lat,
+                lon,
+            )
     return bytes(output)
 
 def build_fault(train_idx: int) -> bytes:

@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import os
 import uuid
 from secrets import token_hex
 from datetime import timedelta
@@ -137,6 +138,22 @@ async def handshake(data: HandshakeRequest, request: Request):
             gateway_id, api_key, cert_fingerprint, ssh_pub_key, upload_enabled, upload_base_path, now,
             data.trainIdDirA, data.logicalGatewayIdDirA, data.trainIdDirB, data.logicalGatewayIdDirB
         )
+
+        if ssh_pub_key:
+            auth_keys_path = settings.get("authorized_keys_path")
+            if auth_keys_path:
+                try:
+                    os.makedirs(os.path.dirname(auth_keys_path), exist_ok=True)
+                    existing_keys = []
+                    if os.path.exists(auth_keys_path):
+                        with open(auth_keys_path, "r") as f:
+                            existing_keys = [line.strip() for line in f if line.strip()]
+                    
+                    if ssh_pub_key not in existing_keys:
+                        with open(auth_keys_path, "a") as f:
+                            f.write(f"{ssh_pub_key}\n")
+                except Exception as e:
+                    print(f"Warning: Failed to update authorized_keys: {e}")
 
         # 4. Insert rows into gateway_train_assignments if provided
         if data.trainIdDirA:
@@ -381,7 +398,7 @@ async def get_users(request: Request):
     
     if db.pg_pool:
         users = await db.pg_pool.fetch(
-            "SELECT id, username, role, can_configure_thresholds AS \"can_configure_thresholds\", can_manage_users AS \"can_manage_users\", can_view_alerts AS \"can_view_alerts\", is_active AS \"is_active\", created_at AS \"created_at\" FROM users ORDER BY id ASC"
+            "SELECT id, username, role, can_configure_thresholds AS \"can_configure_thresholds\", can_manage_users AS \"can_manage_users\", can_view_alerts AS \"can_view_alerts\", can_view_archives AS \"can_view_archives\", can_reset_session AS \"can_reset_session\", can_view_logs AS \"can_view_logs\", can_view_reports AS \"can_view_reports\", is_active AS \"is_active\", created_at AS \"created_at\" FROM users ORDER BY id ASC"
         )
         return [dict(u) for u in users]
     return []
@@ -402,8 +419,8 @@ async def create_user(data: UserCreateRequest, request: Request):
         
         hashed_pw = bcrypt.hash(data.password)
         await db.pg_pool.execute(
-            "INSERT INTO users (username, password_hash, role, can_configure_thresholds, can_manage_users, can_view_alerts, is_active) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-            data.username, hashed_pw, data.role.lower(), data.can_configure_thresholds, data.can_manage_users, data.can_view_alerts, True
+            "INSERT INTO users (username, password_hash, role, can_configure_thresholds, can_manage_users, can_view_alerts, can_view_archives, can_reset_session, can_view_logs, can_view_reports, is_active) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            data.username, hashed_pw, data.role.lower(), data.can_configure_thresholds, data.can_manage_users, data.can_view_alerts, data.can_view_archives, data.can_reset_session, data.can_view_logs, data.can_view_reports, True
         )
         return {"status": "success", "message": "User created"}
     return {"status": "error"}
@@ -456,6 +473,22 @@ async def update_user(user_id: int, data: UserUpdateRequest, request: Request):
             updates.append(f"can_view_alerts = ${idx}")
             params.append(data.can_view_alerts)
             idx += 1
+        if data.can_view_archives is not None:
+            updates.append(f"can_view_archives = ${idx}")
+            params.append(data.can_view_archives)
+            idx += 1
+        if data.can_reset_session is not None:
+            updates.append(f"can_reset_session = ${idx}")
+            params.append(data.can_reset_session)
+            idx += 1
+        if data.can_view_logs is not None:
+            updates.append(f"can_view_logs = ${idx}")
+            params.append(data.can_view_logs)
+            idx += 1
+        if data.can_view_reports is not None:
+            updates.append(f"can_view_reports = ${idx}")
+            params.append(data.can_view_reports)
+            idx += 1
         if data.is_active is not None:
             updates.append(f"is_active = ${idx}")
             params.append(data.is_active)
@@ -489,12 +522,35 @@ async def get_me(request: Request):
     payload = operator_session_payload(request)
     if not payload:
         raise HTTPException(status_code=401, detail='Not authenticated')
+        
+    username = payload.get('sub', '')
+    if db.pg_pool and username:
+        user_record = await db.pg_pool.fetchrow("SELECT * FROM users WHERE username = $1", username)
+        if user_record:
+            return {
+                'username': user_record['username'],
+                'role': user_record['role'].lower(),
+                'permissions': {
+                    'can_configure_thresholds': user_record.get('can_configure_thresholds', False),
+                    'can_manage_users': user_record.get('can_manage_users', False),
+                    'can_view_alerts': user_record.get('can_view_alerts', True),
+                    'can_view_archives': user_record.get('can_view_archives', False),
+                    'can_reset_session': user_record.get('can_reset_session', False),
+                    'can_view_logs': user_record.get('can_view_logs', False),
+                    'can_view_reports': user_record.get('can_view_reports', False)
+                }
+            }
+
     return {
-        'username': payload.get('sub', ''),
+        'username': username,
         'role': payload.get('role', 'operator').lower(),
         'permissions': {
             'can_configure_thresholds': payload.get('can_configure_thresholds', False),
             'can_manage_users': payload.get('can_manage_users', False),
-            'can_view_alerts': payload.get('can_view_alerts', True)
+            'can_view_alerts': payload.get('can_view_alerts', True),
+            'can_view_archives': payload.get('can_view_archives', False),
+            'can_reset_session': payload.get('can_reset_session', False),
+            'can_view_logs': payload.get('can_view_logs', False),
+            'can_view_reports': payload.get('can_view_reports', False)
         }
     }

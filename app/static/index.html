@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>UABAMS Dashboard</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="/static/styles.css?v=66">
+  <link rel="stylesheet" href="/static/styles.css?v=68">
 </head>
 <body><button id="showAllMapsBtn" class="secondary hidden" onclick="closeFullscreenMap()"><i class="bi bi-x-circle"></i> Close Map</button>
   <!-- Dummy inputs to capture aggressive browser autofill -->
@@ -25,7 +25,9 @@
         <p class="header-subtitle">Vande Bharat gateway monitoring console</p>
       </div>
       <div class="header-actions">
-
+        <div class="session-timer" id="sessionTimerDisplay" style="margin-right: 15px; font-weight: 500; font-size: 14px; display: flex; align-items: center;" title="Session expires in">
+          <i class="bi bi-clock-history" style="margin-right: 5px;"></i> <span id="sessionTimerText">--:--</span>
+        </div>
         <div class="profile-dropdown">
           <button class="profile-dropdown-btn" onclick="document.getElementById('profileDropdownContent').classList.toggle('show')">
             <span id="displayUsername" style="text-transform: uppercase;">ADMIN</span>
@@ -35,7 +37,7 @@
             <a href="javascript:void(0)" onclick="selectTab('users'); document.getElementById('profileDropdownContent').classList.remove('show');" id="dropdownUsersLink" class="admin-only">
               <i class="bi bi-people" style="margin-right: 8px;"></i> Users
             </a>
-            <a href="/docs" target="_blank" class="admin-only" onclick="document.getElementById('profileDropdownContent').classList.remove('show');">
+            <a href="/docs" target="_blank" class="admin-only" id="swaggerBtn" onclick="document.getElementById('profileDropdownContent').classList.remove('show');">
               <i class="bi bi-file-earmark-text" style="margin-right: 8px;"></i> Swagger API
             </a>
             <a href="/logout" onclick="try{localStorage.removeItem('activeTab');}catch(e){}">
@@ -69,6 +71,7 @@
     <nav class="tabs" aria-label="Dashboard sections">
       <button class="tab active" data-tab="overview">Dashboard</button>
       <button class="tab admin-only" data-tab="calibration">Calibration</button>
+      <button class="tab admin-only" data-tab="routes_config">Route Config</button>
       <button class="tab" data-tab="alerts">Alerts</button>
       <button class="tab" data-tab="archives">Archives</button>
       <button class="tab admin-only" data-tab="reset">Reset</button>
@@ -172,43 +175,8 @@
         </div>
       </div>
 
-      <div class="alert-summary-grid">
-        <div class="alert-summary red" id="card-RED" onclick="filterByAlertLevel('RED')">
-            <div class="summary-content">
-                <span class="summary-title">Critical Defects</span>
-                <strong id="alertRed" class="summary-value">0</strong>
-                <span class="summary-subtext">Action Required</span>
-            </div>
-            <div class="summary-icon"><i class="bi bi-exclamation-triangle"></i></div>
-        </div>
-
-        <div class="alert-summary yellow" id="card-YELLOW" onclick="filterByAlertLevel('YELLOW')">
-            <div class="summary-content">
-                <span class="summary-title">Warning Defects</span>
-                <strong id="alertYellow" class="summary-value">0</strong>
-                <span class="summary-subtext">Monitor Closely</span>
-            </div>
-            <div class="summary-icon"><i class="bi bi-exclamation-circle"></i></div>
-        </div>
-
-        <div class="alert-summary green" id="card-GREEN" onclick="filterByAlertLevel('GREEN')">
-            <div class="summary-content">
-                <span class="summary-title">Normal Alerts</span>
-                <strong id="alertGreen" class="summary-value">0</strong>
-                <span class="summary-subtext">Track in Good Condition</span>
-            </div>
-            <div class="summary-icon"><i class="bi bi-check-circle"></i></div>
-        </div>
-
-        <div class="alert-summary total" id="card-TOTAL" onclick="filterByAlertLevel('TOTAL')">
-            <div class="summary-content">
-                <span class="summary-title">Total Alerts</span>
-                <strong id="alertTotal" class="summary-value">0</strong>
-                <span class="summary-subtext">Across Section</span>
-            </div>
-            <div class="summary-icon"><i class="bi bi-bar-chart"></i></div>
-        </div>
-      </div>
+      <!-- Fix 2: Dynamic per-gateway alert card groups — populated by renderAlertSummary() in JS -->
+      <div id="alertSummaryContainer"></div>
       <div class="map-pair">
         <article class="map-card" data-map-gateway="GW_UABAMS_BOGIE_01">
           <div class="gateway-title"><span>GW1 Route Map</span><span id="gw1MapState" class="badge offline">-</span></div>
@@ -305,6 +273,49 @@
             </tr>
           </thead>
           <tbody id="usersTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Route Config Panel -->
+    <section id="routes_config" class="panel">
+      <div class="page-header">
+        <h2>Route Configurations</h2>
+      </div>
+
+      <div class="section-head" style="margin-top: 20px;">
+        <h3>Routes</h3>
+        <button id="addRouteBtn" class="primary">+ Add Route</button>
+      </div>
+      <div class="table-wrap compact-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Route Name</th>
+              <th>Acceleration Limit (g)</th>
+              <th>Created At</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="routesTable"></tbody>
+        </table>
+      </div>
+
+      <div class="section-head" style="margin-top: 40px;">
+        <h3>Contacts for SMS Alerts</h3>
+        <button id="addContactBtn" class="primary">+ Add Contact</button>
+      </div>
+      <div class="table-wrap compact-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Contact Name</th>
+              <th>Phone Number</th>
+              <th>Route</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="contactsTable"></tbody>
         </table>
       </div>
     </section>
@@ -657,7 +668,7 @@
   <script src="/static/security.js?v=20260720-sec-v2"></script>
   <div id="userModal" class="modal" style="display: none;">
     <div class="modal-content">
-      <span class="close" id="closeUserModal">&times;</span>
+      <button class="close" id="closeUserModal" type="button" aria-label="Close modal" style="position:absolute;top:10px;right:14px;background:none;border:none;font-size:24px;cursor:pointer;color:#666;line-height:1;padding:4px 8px;">&times;</button>
       <h2 id="userModalTitle">Add User</h2>
       <form id="userForm">
         <input type="hidden" id="userId">
@@ -685,8 +696,20 @@
           <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px; cursor: pointer;">
             <input type="checkbox" id="userPermConfigureThresholds"> Configure Thresholds (Calibration)
           </label>
-          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+          <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px; cursor: pointer;">
             <input type="checkbox" id="userPermManageUsers"> Manage Users (Admin Panel)
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px; cursor: pointer;">
+            <input type="checkbox" id="userPermViewArchives"> View Archives
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px; cursor: pointer;">
+            <input type="checkbox" id="userPermResetSession"> Reset Sessions
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px; cursor: pointer;">
+            <input type="checkbox" id="userPermViewLogs"> View Activity Logs
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="userPermViewReports"> View Alarm Log Reports
           </label>
         </fieldset>
         
@@ -699,13 +722,78 @@
     </div>
   </div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
-  <script src="https://unpkg.com/leaflet-polylinedecorator@1.6.0/dist/leaflet.polylineDecorator.js"></script>
+  <div id="routeModal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <button class="close" id="closeRouteModal" type="button" aria-label="Close modal" style="position:absolute;top:10px;right:14px;background:none;border:none;font-size:24px;cursor:pointer;color:#666;line-height:1;padding:4px 8px;">&times;</button>
+      <h2 id="routeModalTitle">Add Route</h2>
+      <form id="routeForm">
+        <input type="hidden" id="routeId">
+        <label>Route Name
+          <input type="text" id="routeName" required>
+        </label>
+        <label>Vertical Limit (g)
+          <input type="number" step="0.1" id="routeVerticalLimit" required value="50.0">
+        </label>
+        <label>Lateral Limit (g)
+          <input type="number" step="0.1" id="routeLateralLimit" required value="80.0">
+        </label>
+        <button type="submit" class="primary" style="margin-top: 20px; width: 100%;">Save Route</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="contactModal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <button class="close" id="closeContactModal" type="button" aria-label="Close modal" style="position:absolute;top:10px;right:14px;background:none;border:none;font-size:24px;cursor:pointer;color:#666;line-height:1;padding:4px 8px;">&times;</button>
+      <h2 id="contactModalTitle">Add Contact</h2>
+      <form id="contactForm">
+        <input type="hidden" id="contactId">
+        <label>Name
+          <input type="text" id="contactName" required>
+        </label>
+        <label>Mobile Number
+          <input type="tel" id="contactPhone" required>
+        </label>
+        <label>Designation
+          <input type="text" id="contactDesignation">
+        </label>
+        <label>Zone
+          <input type="text" id="contactZone">
+        </label>
+        <label>Division
+          <input type="text" id="contactDivision">
+        </label>
+        <label>Section
+          <input type="text" id="contactSection">
+        </label>
+        <label>Route
+          <select id="contactRouteSelect" required>
+            <option value="">Select Route</option>
+          </select>
+        </label>
+        <label style="display: flex; align-items: center; gap: 8px; margin-top: 10px; cursor: pointer;">
+          <input type="checkbox" id="contactSmsEnabled" checked> SMS Alert
+        </label>
+        <label style="display: flex; align-items: center; gap: 8px; margin-top: 5px; cursor: pointer;">
+          <input type="checkbox" id="contactActive" checked> Active
+        </label>
+        <button type="submit" class="primary" style="margin-top: 20px; width: 100%;">Save Contact</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="/static/vendor/leaflet/leaflet.js"></script>
+  <script>
+    if (!window.L) {
+      document.write('<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><' + '/script>');
+    }
+  </script>
+  <script src="/static/vendor/leaflet/leaflet-heat.js"></script>
+  <script src="/static/vendor/leaflet/leaflet.polylineDecorator.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
-  <script src="/static/app-main.js?v=67"></script>
+  <script src="/static/app-main.js?v=73"></script>
 </body>
 </html>
 
