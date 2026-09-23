@@ -110,12 +110,12 @@ class AxisAlertItem(BaseModel):
     sensor: str = Field(..., description="Sensor identity: AXLE_LEFT, AXLE_RIGHT, BOGIE")
     axis: str = Field(..., description="Axis: X, Y, Z")
     channel: str = Field(..., description="Channel: AL_X, AL_Y, AL_Z, AR_X, AR_Y, AR_Z, BG_X, BG_Y, BG_Z")
-    peakValueG: float = Field(..., description="Acceleration peak in g, 4 decimal places")
+    peakValueG: float = Field(..., ge=0.0, description="Acceleration peak in g, 4 decimal places")
     thresholdG: float = Field(..., description="Configured threshold in g, 4 decimal places")
     speedKmph: float = Field(..., description="Train speed at the exact moment of this axis peak, 2 decimal places")
     locationKm: float = Field(..., description="Chainage from start in km, 5 decimal places = 1 cm accuracy")
-    latitude: float = Field(..., description="GPS Latitude of peak, 6 decimal places")
-    longitude: float = Field(..., description="GPS Longitude of peak, 6 decimal places")
+    latitude: float = Field(..., ge=-90.0, le=90.0, description="GPS Latitude of peak, 6 decimal places")
+    longitude: float = Field(..., ge=-180.0, le=180.0, description="GPS Longitude of peak, 6 decimal places")
 
 
 class AlertRequest(BaseModel):
@@ -131,6 +131,13 @@ class AlertRequest(BaseModel):
     maxSpeedKmph: float = Field(..., description="Window max speed in km/h, 2 decimal places")
     alertsCount: int = Field(..., description="Total count of exceeded axes in this window")
     alerts: list[AxisAlertItem] = Field(default_factory=list, description="Array of exceeded axes")
+    peakValueG: float | None = Field(None, ge=0.0)
+    thresholdG: float | None = None
+    sensor: str | None = None
+    axis: str | None = None
+    channel: str | None = None
+    latitude: float = Field(..., ge=-90.0, le=90.0)
+    longitude: float = Field(..., ge=-180.0, le=180.0)
 
 
 class ResetSessionRequest(BaseModel):

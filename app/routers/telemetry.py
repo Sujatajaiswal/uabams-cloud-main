@@ -326,11 +326,21 @@ async def heartbeat(
     registered_serial = gateway.get("gatewaySerial")
     if data.gatewaySerial and registered_serial and data.gatewaySerial != registered_serial:
         raise HTTPException(status_code=403, detail="Gateway serial does not match registered gateway")
+        
+    if data.trainId:
+        import re
+        if not re.match(r'^[a-zA-Z0-9]{5,6}$', data.trainId):
+            raise HTTPException(status_code=400, detail="Invalid train number format")
+        train_exists = await db.pg_pool.fetchval("SELECT 1 FROM trains WHERE train_no = $1", data.trainId)
+        if not train_exists:
+            raise HTTPException(status_code=404, detail="Train not found")
 
     for result in data.commandResults:
         command = await db.pg_pool.fetchrow("SELECT type, status FROM gateway_commands WHERE command_id = $1 AND gateway_id = $2", result.commandId, gateway_id)
-        if not command or command.get("type") != result.type:
-            continue
+        if not command:
+            raise HTTPException(status_code=404, detail=f"Command '{result.commandId}' not found for this gateway")
+        if command.get("type") != result.type:
+            raise HTTPException(status_code=400, detail=f"Command type mismatch for '{result.commandId}'")
         if command.get("status") in ("success", "failed", "superseded", "ignored"):
             continue
 
@@ -677,6 +687,29 @@ async def create_alert(
         raise HTTPException(status_code=403, detail="Session or API key does not belong to supplied gateway")
     train_no = await resolve_train_id(gateway_id, data.trainNo, request.state.train_id)
 
+    logical_gateway_id = data.logicalGatewayId or getattr(request.state, "logical_gateway_id", None)
+    if not logical_gateway_id:
+        assignment = await db.pg_pool.fetchrow("SELECT logical_gateway_id FROM gateway_train_assignments WHERE gateway_id = $1 AND train_id = $2 AND is_active = TRUE", gateway_id, train_no)
+        if assignment:
+            logical_gateway_id = assignment["logical_gateway_id"]
+            data.logicalGatewayId = logical_gateway_id
+
+    from app.models import AxisAlertItem
+    if data.peakValueG is not None and not data.alerts:
+        data.alerts = [
+            AxisAlertItem(
+                sensor=data.sensor or "BOGIE",
+                axis=data.axis or "Z",
+                channel=data.channel or "BG_Z",
+                peakValueG=data.peakValueG,
+                thresholdG=data.thresholdG or 50.0,
+                speedKmph=data.speedKmph,
+                locationKm=data.startKm,
+                latitude=data.latitude or 0.0,
+                longitude=data.longitude or 0.0,
+            )
+        ]
+
     now = utc_now()
     created_at = datetime.fromtimestamp(data.timestampUtcMs / 1000.0, tz=UTC) if data.timestampUtcMs else now
 
@@ -796,13 +829,15 @@ async def create_alert(
                         # Assume track feature can be looked up or passed, for now use a placeholder
                         nearest_feature = "Unknown"
                         
-                        msg = (f"apnaUABAMS Alert Train: {train_no} "
-                               f"Route: {route_info.get('name')} "
-                               f"Type: {'Vertical' if is_vertical else 'Lateral'} "
-                               f"Acc. Value: {item.peakValueG:.2f}g "
-                               f"Limit: {route_threshold}g "
+                        msg = (f"apnaUABAMSSite: {gateway_id} "
+                               f"Train No: {train_no} "
+                               f"Route Name: {route_info.get('name')} "
+                               f"Fault Type: {'Vertical' if is_vertical else 'Lateral'} "
+                               f"Peak: {item.peakValueG:.2f}g "
+                               f"Threshold: {route_threshold}g "
                                f"Speed: {item.speedKmph:.2f}kmph "
-                               f"GPS: {item.latitude},{item.longitude} "
+                               f"Lat: {item.latitude} "
+                               f"Lon: {item.longitude} "
                                f"Feature: {nearest_feature}")
                         
                         from app.utils import send_sms
@@ -836,8 +871,12 @@ async def create_alert(
         "alert": overall_color,
         "createdAt": serialize(created_at),
     }
+    severity = "critical" if overall_color == "RED" else "warning" if overall_color == "YELLOW" else "normal"
     return {
-        "status": "success",
+        "status": "created",
+        "alertId": window_alert_id,
+        "severity": severity,
+        "color": overall_color,
         "alert": overall_color,
         "windowAlertId": window_alert_id,
         "event": serialize(window_document),

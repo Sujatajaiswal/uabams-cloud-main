@@ -41,7 +41,7 @@ async def gateway_demo_connect(data: GatewayConnectionRequest):
         )
         
     return GatewayConnectionResponse(
-        status="approved",
+        status="connected",
         message=f"Gateway connectivity approved! Gateway '{gateway.get('gatewayId')}' is registered and active.",
         gatewayId=gateway.get("gatewayId"),
         trainId=gateway.get("trainId")
@@ -120,8 +120,13 @@ async def save_calibration(
     request: Request,
     train_no: str | None = None,
 ):
-    if not is_operator_authenticated(request):
+    from app.utils import operator_session_payload
+    payload = operator_session_payload(request)
+    if not payload:
         raise HTTPException(status_code=401, detail="Operator login required")
+    if not payload.get("can_configure_thresholds"):
+        raise HTTPException(status_code=403, detail="Permission denied: Threshold configuration required")
+    
     if not any((data.adxlLeft, data.adxlRight, data.bogie, data.encoder)):
         raise HTTPException(status_code=400, detail="At least one calibration section is required")
 
@@ -333,6 +338,8 @@ async def save_calibration(
     return {
         "status": "success",
         "message": "Calibration saved and command queued",
+        "version": version,
+        "commandId": command_id,
         "calibration": serialize(document),
         "command": {
             "commandId": command_id,
@@ -351,7 +358,13 @@ async def get_calibration_payload(
     request: Request,
     x_api_key: Annotated[str | None, Header(alias="X-Api-Key")] = None,
 ):
-    await require_gateway_access(request, gateway_id)
+    from app.utils import operator_session_payload
+    payload = operator_session_payload(request)
+    if payload:
+        if not payload.get("can_configure_thresholds"):
+            raise HTTPException(status_code=403, detail="Permission denied: Threshold configuration required")
+    else:
+        await require_gateway_access(request, gateway_id)
 
     query = """
         SELECT payload, sha256
