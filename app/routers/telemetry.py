@@ -331,9 +331,8 @@ async def heartbeat(
         import re
         if not re.match(r'^[a-zA-Z0-9]{2,10}$', data.trainId):
             raise HTTPException(status_code=400, detail="Invalid train number format")
-        train_exists = await db.pg_pool.fetchval("SELECT 1 FROM trains WHERE train_no = $1", data.trainId)
-        if not train_exists:
-            raise HTTPException(status_code=404, detail="Train not found")
+        # Note: we intentionally do NOT reject heartbeats for unregistered trains.
+        # A gateway may heartbeat before its train is fully provisioned in the system.
 
     for result in data.commandResults:
         command = await db.pg_pool.fetchrow("SELECT type, status FROM gateway_commands WHERE command_id = $1 AND gateway_id = $2", result.commandId, gateway_id)
