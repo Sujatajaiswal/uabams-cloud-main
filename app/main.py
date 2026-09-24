@@ -560,13 +560,13 @@ async def startup() -> None:
                         ssh_public_key   TEXT,
                         PRIMARY KEY (gateway_id)
                     );
-                    ALTER TABLE gateway_auth DROP CONSTRAINT IF EXISTS gateway_auth_pkey CASCADE;
+                    -- ALTER TABLE gateway_auth DROP CONSTRAINT IF EXISTS gateway_auth_pkey CASCADE;
                     ALTER TABLE gateway_auth ALTER COLUMN train_id DROP NOT NULL;
-                    DO $$ BEGIN
-                        ALTER TABLE gateway_auth ADD CONSTRAINT gateway_auth_pkey PRIMARY KEY (gateway_id);
-                    EXCEPTION WHEN OTHERS THEN
-                        NULL;
-                    END $$;
+                    -- DO $$ BEGIN
+                    --    ALTER TABLE gateway_auth ADD CONSTRAINT gateway_auth_pkey PRIMARY KEY (gateway_id);
+                    -- EXCEPTION WHEN OTHERS THEN
+                    --    NULL;
+                    -- END $$;
                     ALTER TABLE gateway_auth ADD COLUMN IF NOT EXISTS train_id_dir_a VARCHAR(50);
                     ALTER TABLE gateway_auth ADD COLUMN IF NOT EXISTS train_id_dir_b VARCHAR(50);
                     ALTER TABLE gateway_auth ADD COLUMN IF NOT EXISTS logical_gateway_id_dir_a VARCHAR(100);
