@@ -12,9 +12,8 @@ services:
     ports:
       - "5433:5432"          # expose so pgAdmin / DBeaver can connect locally
     volumes:
-      # Bind mount → DB files live on the HOST at ./uabams-data/pgdata
-      # Survives 'docker compose down -v'. Back up this directory for DB snapshots.
-      - ./uabams-data/pgdata:/var/lib/postgresql/data
+      # Use a named volume for the DB to avoid Windows filesystem permission errors
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U uabams_user -d uabams_db"]
       interval: 5s
@@ -42,20 +41,28 @@ services:
       OPERATOR_PASSWORD: operator123
       ADMIN_USERNAME: admin
       ADMIN_PASSWORD: admin123
-      CLOUD_PUBLIC_BASE_URL: "${CLOUD_PUBLIC_BASE_URL:-http://localhost:8000}"
-      SSH_HOST: "localhost"
+      CLOUD_PUBLIC_BASE_URL: "${CLOUD_PUBLIC_BASE_URL:-http://20.8.1.15:8000}"  # changed by shobhit dated 9-9-26
+      SSH_HOST: "20.8.1.15"  # changed by shobhit dated 9-9-26
       SSH_PORT: "2222"
       SSH_USER: "uabams_upload"
-      SSH_HOST_KEY: "[localhost]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK85B67Av9O32vupZ6mpgptiFD6z7Yp0PM4UxvOLCA7i"
+      SSH_HOST_KEY: "[20.8.1.15]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFQFEVhatPXMJx7b0Z0uoRqZIkS8qEDLFb8WoeI0eksr"  # changed by shobhit dated 9-9-26
       UPLOAD_BASE_DIR: "/app/incoming"
       AUTHORIZED_KEYS_PATH: "/app/sftp_keys/authorized_keys"
       TIME_DOMAIN_DIR: "/app/time_domain"
+      # MSG91 SMS gateway — https://msg91.com
+      MSG91_AUTH_KEY: "571412AifEc4IN9tq6aa8edfeP1"
+      MSG91_SENDER_ID: "UABAMS"
+      # Qikberry SMS Gateway
+      QIKBERRY_AUTH_TOKEN: "${QIKBERRY_AUTH_TOKEN}"
+      SMS_SENDER: "${SMS_SENDER:-IRAPNA}"
+      SMS_SERVICE: "${SMS_SERVICE:-SI}"
+      SMS_TEMPLATE_ID: "${SMS_TEMPLATE_ID:-1077127650088578029}"
     volumes:
       # Live code bind mount for immediate UI/API updates
       - ./app:/app/app
       # SSH authorized_keys shared with the SFTP container
       - ./uabams-data/sftp_keys:/app/sftp_keys
-      # Incoming ZIP uploads (deleted after processing, but kept as landing zone)
+      # Incoming ZIP uploads landing zone
       - ./uabams-data/sftp_incoming:/app/incoming
       # Extracted time-domain sensor binary files (replaces Postgres BYTEA chunks)
       - ./uabams-data/time_domain:/app/time_domain
@@ -74,3 +81,5 @@ services:
     restart: always
 
 # ── No named volumes needed — all data lives on the host at ./uabams-data/ ──
+volumes:
+  pgdata:
