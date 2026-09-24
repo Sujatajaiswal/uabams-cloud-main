@@ -500,7 +500,7 @@ async def startup() -> None:
                         active       BOOLEAN DEFAULT TRUE,
                         created_at   TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                     );
-                    ALTER TABLE contacts RENAME COLUMN phone_number TO mobile_number;
+                    -- ALTER TABLE contacts RENAME COLUMN phone_number TO mobile_number;
                     ALTER TABLE contacts ADD COLUMN IF NOT EXISTS designation VARCHAR(100);
                     ALTER TABLE contacts ADD COLUMN IF NOT EXISTS zone VARCHAR(100);
                     ALTER TABLE contacts ADD COLUMN IF NOT EXISTS division VARCHAR(100);
@@ -911,14 +911,14 @@ async def startup() -> None:
                     ALTER TABLE upload_leases ADD COLUMN IF NOT EXISTS remote_final_path VARCHAR(512);
 
                     -- Migration 004: add logical_gateway_id to all telemetry tables
-                    ALTER TABLE heartbeat_logs    ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
-                    ALTER TABLE rms_records       ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
-                    ALTER TABLE peak_records      ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
-                    ALTER TABLE fault_records     ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
-                    ALTER TABLE archives          ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
-                    ALTER TABLE alert_events      ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
-                    ALTER TABLE time_domain_files ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
-                    ALTER TABLE upload_leases     ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    -- ALTER TABLE heartbeat_logs    ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    -- ALTER TABLE rms_records       ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    -- ALTER TABLE peak_records      ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    -- ALTER TABLE fault_records     ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    -- ALTER TABLE archives          ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    -- ALTER TABLE alert_events      ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    -- ALTER TABLE time_domain_files ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    -- ALTER TABLE upload_leases     ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
 
                     -- ── Heartbeat logs ────────────────────────────────────────
                     CREATE TABLE IF NOT EXISTS heartbeat_logs (
