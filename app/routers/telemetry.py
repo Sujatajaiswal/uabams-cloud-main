@@ -329,7 +329,7 @@ async def heartbeat(
         
     if data.trainId:
         import re
-        if not re.match(r'^[a-zA-Z0-9]{5,6}$', data.trainId):
+        if not re.match(r'^[a-zA-Z0-9]{2,10}$', data.trainId):
             raise HTTPException(status_code=400, detail="Invalid train number format")
         train_exists = await db.pg_pool.fetchval("SELECT 1 FROM trains WHERE train_no = $1", data.trainId)
         if not train_exists:

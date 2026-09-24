@@ -90,11 +90,14 @@ async def train_dashboard(train_no: str, request: Request):
 
         # --- Multi-source gateway discovery ---
         # Source 1: gateway_train_assignments (populated by handshake with trainIdDirA/B)
-        gta_rows = await conn.fetch('''
-            SELECT gateway_id AS "gatewayId", logical_gateway_id AS "logicalGatewayId"
-            FROM gateway_train_assignments
-            WHERE train_id = $1 AND is_active = true
-        ''', train_no)
+        try:
+            gta_rows = await conn.fetch('''
+                SELECT gateway_id AS "gatewayId", logical_gateway_id AS "logicalGatewayId"
+                FROM gateway_train_assignments
+                WHERE train_id = $1 AND is_active = true
+            ''', train_no)
+        except Exception:
+            gta_rows = []
         logical_id_map = {r["gatewayId"]: r["logicalGatewayId"] for r in gta_rows if r.get("gatewayId")}
         # Source 2: gateway_status.train_id (updated by heartbeat payload via COALESCE)
         gs_rows = await conn.fetch(
