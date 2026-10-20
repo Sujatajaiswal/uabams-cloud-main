@@ -66,8 +66,8 @@ app = FastAPI(
 )
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
-SPATIAL_RETENTION_DAYS = 90
-TIME_DOMAIN_RETENTION_DAYS = 30
+SPATIAL_RETENTION_DAYS = 30
+TIME_DOMAIN_RETENTION_DAYS = 7
 SPATIAL_RETENTION_SECONDS = SPATIAL_RETENTION_DAYS * 24 * 60 * 60
 RAW_TIME_DOMAIN_CHUNK_BYTES = 8 * 1024 * 1024
 TIME_DOMAIN_DIR = os.environ.get("TIME_DOMAIN_DIR", "/app/time_domain")
@@ -589,7 +589,10 @@ async def startup() -> None:
                     CREATE TABLE IF NOT EXISTS gateway_status (
                         gateway_id          VARCHAR(100) PRIMARY KEY,
                         train_id            VARCHAR(50),
+                        logical_gateway_id  VARCHAR(100),
                         online              BOOLEAN DEFAULT FALSE,
+                        latitude            DOUBLE PRECISION,
+                        longitude           DOUBLE PRECISION,
                         last_heartbeat      TIMESTAMP WITH TIME ZONE,
                         last_handshake      TIMESTAMP WITH TIME ZONE,
                         adxl_state          VARCHAR(50),
@@ -911,14 +914,14 @@ async def startup() -> None:
                     ALTER TABLE upload_leases ADD COLUMN IF NOT EXISTS remote_final_path VARCHAR(512);
 
                     -- Migration 004: add logical_gateway_id to all telemetry tables
-                    -- ALTER TABLE heartbeat_logs    ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
-                    -- ALTER TABLE rms_records       ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
-                    -- ALTER TABLE peak_records      ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
-                    -- ALTER TABLE fault_records     ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
-                    -- ALTER TABLE archives          ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
-                    -- ALTER TABLE alert_events      ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
-                    -- ALTER TABLE time_domain_files ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
-                    -- ALTER TABLE upload_leases     ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    ALTER TABLE heartbeat_logs    ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    ALTER TABLE rms_records       ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    ALTER TABLE peak_records      ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    ALTER TABLE fault_records     ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    ALTER TABLE archives          ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    ALTER TABLE alert_events      ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    ALTER TABLE time_domain_files ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    ALTER TABLE upload_leases     ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
 
                     -- ── Heartbeat logs ────────────────────────────────────────
                     CREATE TABLE IF NOT EXISTS heartbeat_logs (
@@ -987,10 +990,13 @@ async def startup() -> None:
                     EXCEPTION WHEN OTHERS THEN NULL;
                     END $$;
 
-                    ALTER TABLE gateway_status ADD COLUMN IF NOT EXISTS train_id       VARCHAR(50);
-                    ALTER TABLE gateway_status ADD COLUMN IF NOT EXISTS online         BOOLEAN DEFAULT FALSE;
-                    ALTER TABLE gateway_status ADD COLUMN IF NOT EXISTS last_heartbeat TIMESTAMP WITH TIME ZONE;
-                    ALTER TABLE gateway_status ADD COLUMN IF NOT EXISTS last_handshake TIMESTAMP WITH TIME ZONE;
+                    ALTER TABLE gateway_status ADD COLUMN IF NOT EXISTS train_id            VARCHAR(50);
+                    ALTER TABLE gateway_status ADD COLUMN IF NOT EXISTS logical_gateway_id VARCHAR(100);
+                    ALTER TABLE gateway_status ADD COLUMN IF NOT EXISTS online              BOOLEAN DEFAULT FALSE;
+                    ALTER TABLE gateway_status ADD COLUMN IF NOT EXISTS latitude            DOUBLE PRECISION;
+                    ALTER TABLE gateway_status ADD COLUMN IF NOT EXISTS longitude           DOUBLE PRECISION;
+                    ALTER TABLE gateway_status ADD COLUMN IF NOT EXISTS last_heartbeat      TIMESTAMP WITH TIME ZONE;
+                    ALTER TABLE gateway_status ADD COLUMN IF NOT EXISTS last_handshake      TIMESTAMP WITH TIME ZONE;
 
                     ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS session_name   VARCHAR(100);
                     ALTER TABLE alert_events ADD COLUMN IF NOT EXISTS archive_sha256 VARCHAR(64);
@@ -1228,6 +1234,38 @@ async def startup() -> None:
                     ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_reports BOOLEAN DEFAULT FALSE;
                     ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INT DEFAULT 0;
                     ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP WITH TIME ZONE DEFAULT NULL;
+
+                    -- ── CRIS export tracking ──────────────────────────────────
+                    CREATE TABLE IF NOT EXISTS cris_exports (
+                        id                 SERIAL PRIMARY KEY,
+                        archive_sha256     VARCHAR(64)  NOT NULL,
+                        gateway_id         VARCHAR(100) NOT NULL,
+                        export_type        VARCHAR(20)  NOT NULL,   -- SPATIAL | PROCESSED | ALERTS
+                        train_id           VARCHAR(50),
+                        logical_gateway_id VARCHAR(100),
+                        session_name       VARCHAR(100),
+                        -- Generated file metadata
+                        file_name          VARCHAR(255),
+                        file_path          TEXT,
+                        file_size          BIGINT,
+                        file_sha256        VARCHAR(64),
+                        record_count       INTEGER,
+                        -- Lifecycle status: PENDING → GENERATED → UPLOADING → UPLOADED | FAILED
+                        status             VARCHAR(20)  NOT NULL DEFAULT 'PENDING',
+                        transfer_attempts  INTEGER      NOT NULL DEFAULT 0,
+                        last_error         TEXT,
+                        -- Timestamps
+                        created_at         TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        generated_at       TIMESTAMP WITH TIME ZONE,
+                        uploaded_at        TIMESTAMP WITH TIME ZONE,
+                        UNIQUE (archive_sha256, gateway_id, export_type)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_cris_exports_archive_sha256
+                        ON cris_exports(archive_sha256);
+                    CREATE INDEX IF NOT EXISTS idx_cris_exports_status
+                        ON cris_exports(status);
+                    CREATE INDEX IF NOT EXISTS idx_cris_exports_export_type
+                        ON cris_exports(export_type);
                 """)
 
                 # ── Foreign key constraints ───────────────────────────────
@@ -1446,6 +1484,7 @@ async def startup() -> None:
             print(f"Error seeding test data: {seed_exc}")
 
 from app.routers import auth, telemetry, gateways, hierarchy, ui, logs, routes_config
+from app.routers import cris as cris_router
 
 app.include_router(ui.router)
 app.include_router(auth.router)
@@ -1454,3 +1493,4 @@ app.include_router(gateways.router)
 app.include_router(telemetry.router)
 app.include_router(hierarchy.router)
 app.include_router(routes_config.router)
+app.include_router(cris_router.router)

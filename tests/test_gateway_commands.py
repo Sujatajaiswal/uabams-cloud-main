@@ -288,6 +288,11 @@ class GatewayCommandFlowTests(unittest.IsolatedAsyncioTestCase):
         second = {"calibration": {"encoder": {"encoderPPR": 100}}, "gatewayId": "GW1", "version": 25}
         self.assertEqual(utils.canonical_json_bytes(first), utils.canonical_json_bytes(second))
 
+    def test_gateway_token_creation_and_verification(self):
+        token = utils.create_gateway_token("GW1")
+        payload = utils.verify_gateway_token(token, "GW1")
+        self.assertEqual(payload["sub"], "GW1")
+
 
 class RecordingConnection:
     def __init__(self):

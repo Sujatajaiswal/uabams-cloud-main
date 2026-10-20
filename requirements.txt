@@ -11,3 +11,6 @@ reportlab
 python-dateutil
 passlib
 bcrypt==3.2.2
+paramiko
+pytest
+pytest-asyncio

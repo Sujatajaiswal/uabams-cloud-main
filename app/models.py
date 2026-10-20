@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class HandshakeRequest(BaseModel):
@@ -45,10 +45,10 @@ class AuthRequest(BaseModel):
 
 
 class NodeStatus(BaseModel):
-    status: Literal["PENDING", "IN_PROGRESS", "COMMITTED", "FAILED"]
-    committedVersion: int
-    targetVersion: int
-    valuesChanged: bool
+    status: Literal["PENDING", "IN_PROGRESS", "COMMITTED", "FAILED"] | str
+    committedVersion: int | None = None
+    targetVersion: int | None = None
+    valuesChanged: bool | None = None
     error: str | None = None
 
 
@@ -58,19 +58,20 @@ class CalibrationNodes(BaseModel):
     bogie: NodeStatus | None = None
     encoder: NodeStatus | None = None
 
+    model_config = ConfigDict(extra="allow")
+
 
 class CommandResultItem(BaseModel):
     commandId: str
-    type: Literal["reset", "calibration_update"]
+    type: Literal["reset", "calibration_update", "unknown"] | str
     status: Literal["success", "failed", "staged", "partial_success", "ignored"]
     completedAt: datetime | None = None
     location: dict | None = None
     details: dict | None = None
     reason: str | None = None
-    nodes: CalibrationNodes | None = None
+    nodes: CalibrationNodes | dict[str, Any] | None = None
 
-    class Config:
-        extra = "ignore"
+    model_config = ConfigDict(extra="ignore")
 
 
 class HeartbeatRequest(BaseModel):
@@ -78,6 +79,8 @@ class HeartbeatRequest(BaseModel):
     logicalGatewayId: str | None = Field(None, examples=["GW1_22151_BOGIE_01"])
     trainId: str | None = Field(None, examples=["22151"])
     gatewaySerial: str | None = Field(None, examples=["UABAMS_PIL_01"])
+    latitude: float | None = Field(None, ge=-90.0, le=90.0)
+    longitude: float | None = Field(None, ge=-180.0, le=180.0)
     timestamp: datetime | None = None
     token: str | None = Field(None, examples=["jwt_token"])
     adxlState: str | None = None
@@ -114,8 +117,8 @@ class AxisAlertItem(BaseModel):
     thresholdG: float = Field(..., description="Configured threshold in g, 4 decimal places")
     speedKmph: float = Field(..., description="Train speed at the exact moment of this axis peak, 2 decimal places")
     locationKm: float = Field(..., description="Chainage from start in km, 5 decimal places = 1 cm accuracy")
-    latitude: float = Field(..., ge=-90.0, le=90.0, description="GPS Latitude of peak, 6 decimal places")
-    longitude: float = Field(..., ge=-180.0, le=180.0, description="GPS Longitude of peak, 6 decimal places")
+    latitude: float | None = Field(None, ge=-90.0, le=90.0, description="GPS Latitude of peak, 6 decimal places")
+    longitude: float | None = Field(None, ge=-180.0, le=180.0, description="GPS Longitude of peak, 6 decimal places")
 
 
 class AlertRequest(BaseModel):
@@ -136,8 +139,10 @@ class AlertRequest(BaseModel):
     sensor: str | None = None
     axis: str | None = None
     channel: str | None = None
-    latitude: float = Field(..., ge=-90.0, le=90.0)
-    longitude: float = Field(..., ge=-180.0, le=180.0)
+    # Optional at root level: firmware sends lat/lon only inside each alerts[] item.
+    # The endpoint falls back to the first alert's coordinates when these are absent.
+    latitude: float | None = Field(None, ge=-90.0, le=90.0)
+    longitude: float | None = Field(None, ge=-180.0, le=180.0)
 
 
 class ResetSessionRequest(BaseModel):

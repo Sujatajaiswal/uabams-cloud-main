@@ -76,6 +76,8 @@ function extractTrainNo(val) {
 }
 window.closeFullscreenMap = function() {
   console.log('Close map clicked');
+  // Clear the focused single-alert filter so all markers show again
+  window._focusedAlertState = null;
   document.body.classList.remove('fullscreen-map-mode');
   // Fix 3c: Restore correct per-gateway visibility *before* selectTab() re-renders
   // so there is no intermediate frame where both maps flash visible.
@@ -91,6 +93,13 @@ window.closeFullscreenMap = function() {
   if (btn) btn.style.display = 'none';
   selectTab(window.lastActiveTabBeforeMap || 'alerts');
   window.scrollTo({ top: 0 });
+  // Re-render maps with all markers restored
+  if (state.dashboard) renderMaps(
+    state.dashboard.lastAlerts || [],
+    state.dashboard.gateways || [],
+    state.dashboard.rmsPoints || [],
+    state.dashboard.mapAlerts || []
+  );
   setTimeout(() => { Object.values(maps).forEach(m => m?.invalidateSize()); }, 200);
 };
 const state = { dashboard: null, rmsPoints: [], mapAlerts: [], selectedGateway: '', selectedDateFilter: null };
@@ -866,11 +875,17 @@ function renderAlertSummary(alerts) {
   container.innerHTML = html;
 }
 
-window.focusAlertOnMap = function(lat, lon, gatewayId) {
+// Stores the currently focused single alert so renderMaps can highlight only it.
+window._focusedAlertState = null;
+
+window.focusAlertOnMap = function(lat, lon, gatewayId, alertId, alertColor) {
   if (lat == null || lon == null) return;
   window.lastActiveTabBeforeMap = document.querySelector('.tab.active')?.dataset?.tab || 'alerts';
   selectTab('alerts');
   window.scrollTo({ top: 0, behavior: 'smooth' });
+
+  // ── Store focused alert so map re-render shows ONLY this pin ──────────
+  window._focusedAlertState = { lat, lon, gatewayId, alertId, alertColor: normalizeAlert(alertColor) };
 
   // ── Step 1: Enter fullscreen and show only the relevant gateway card ───
   const showAllBtn = document.getElementById('showAllMapsBtn');
@@ -885,16 +900,22 @@ window.focusAlertOnMap = function(lat, lon, gatewayId) {
     showAllBtn.onclick = window.closeFullscreenMap;
   }
 
-  // ── Step 2: Update map size and view immediately after DOM reflow ──────
+  // ── Step 2: Re-render map with ONLY this alert pin visible ──────────
+  if (state.dashboard) renderMaps(
+    state.dashboard.lastAlerts || [],
+    state.dashboard.gateways || [],
+    state.dashboard.rmsPoints || [],
+    state.dashboard.mapAlerts || []
+  );
+
+  // ── Step 3: Update map size and zoom to alert location ──────────────
   requestAnimationFrame(() => {
     const slotIdx = gatewayId ? dashboardGatewayIds.indexOf(gatewayId) : 0;
     const targetIdx = slotIdx >= 0 ? slotIdx : 0;
     const primaryMap = maps[targetIdx];
     
     if (primaryMap) {
-      // Tell Leaflet about the new fullscreen size FIRST
       primaryMap.invalidateSize({ animate: false });
-      // THEN set the view so it fetches enough tiles for the whole screen at once
       primaryMap.setView([lat, lon], 17, { animate: false });
     }
     
@@ -908,7 +929,7 @@ window.focusAlertOnMap = function(lat, lon, gatewayId) {
 
 function renderAlerts(alerts) {
   setHtml('alertsTable', alerts.length ? alerts.map((alert) => `
-    <tr>
+    <tr id="alert-row-${alert._id}">
       <td>${formatDate(alert.createdAt)}</td>
       <td>${alert.gatewayId || '-'}</td>
       <td>${alert.zone || 'NCR'}</td>
@@ -918,7 +939,7 @@ function renderAlerts(alerts) {
       <td><span class="badge ${alert.alert}">${alert.alert || '-'}</span></td>
       <td>
         ${alert.latitude && alert.longitude ? 
-          `<button class="secondary" style="padding: 4px 8px; font-size: 12px;" onclick="focusAlertOnMap(${alert.latitude}, ${alert.longitude}, '${alert.gatewayId}')"><i class="bi bi-geo-alt-fill"></i> View on Map</button>` 
+          `<button class="secondary" style="padding: 4px 8px; font-size: 12px;" onclick="focusAlertOnMap(${alert.latitude}, ${alert.longitude}, '${alert.gatewayId}', ${alert._id || 0}, '${alert.alert}')"><i class="bi bi-geo-alt-fill"></i> View on Map</button>` 
           : '-'}
       </td>
     </tr>
@@ -1033,7 +1054,18 @@ function renderMaps(alerts, gateways, rmsPoints = [], mapAlerts = []) {
       .filter((point) => Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon)))
       .slice()
       .reverse();
-    const alertPoints = rawAlertPoints.filter((point) => Number(point.lat) !== 0 && Number(point.lon) !== 0);
+
+    // ── If a specific alert was clicked via "View on Map", only show that one ──
+    const focused = window._focusedAlertState;
+    const isFocusedGateway = focused && focused.gatewayId === gatewayId;
+    const alertPoints = isFocusedGateway
+      ? rawAlertPoints.filter((point) => {
+          const latMatch = Math.abs(Number(point.lat) - focused.lat) < 0.0002;
+          const lonMatch = Math.abs(Number(point.lon) - focused.lon) < 0.0002;
+          const colorMatch = normalizeAlert(point.color) === focused.alertColor;
+          return latMatch && lonMatch && colorMatch;
+        })
+      : rawAlertPoints.filter((point) => Number(point.lat) !== 0 && Number(point.lon) !== 0);
 
     const gw = gateways.find((item) => item.gatewayId === gatewayId);
     setText(slot.stateId, gw?.online ? 'Online' : 'Offline');
@@ -1046,25 +1078,27 @@ function renderMaps(alerts, gateways, rmsPoints = [], mapAlerts = []) {
 
     drawColoredRoute(layer, routePoints);
 
-    // Draw Heatmap (Deferred to avoid Canvas 0 width error when unhiding map)
+    // Draw Heatmap only when NOT in focused single-alert mode
     // Fix 3b: Heatmap only for RED/YELLOW (danger signals — GREEN is normal)
-    const heatAlertPoints = alertPoints.filter(p => normalizeAlert(p.color) !== 'GREEN');
-    if (window.L.heatLayer && heatAlertPoints.length > 0) {
-      setTimeout(() => {
-        if (!visibleIds.includes(gatewayId)) return;
-        const heatPoints = heatAlertPoints.map(p => {
-          const snapped = snapToRoute(p.lat, p.lon, routePoints);
-          const severity = normalizeAlert(p.color);
-          const intensity = severity === 'RED' ? 1.0 : 0.6;
-          return [snapped[0], snapped[1], intensity];
-        });
-        L.heatLayer(heatPoints, {
-          radius: 30,
-          blur: 20,
-          maxZoom: 14,
-          gradient: {0.4: 'yellow', 0.8: 'orange', 1.0: 'red'}
-        }).addTo(layer);
-      }, 150);
+    if (!isFocusedGateway) {
+      const heatAlertPoints = alertPoints.filter(p => normalizeAlert(p.color) !== 'GREEN');
+      if (window.L.heatLayer && heatAlertPoints.length > 0) {
+        setTimeout(() => {
+          if (!visibleIds.includes(gatewayId)) return;
+          const heatPoints = heatAlertPoints.map(p => {
+            const snapped = snapToRoute(p.lat, p.lon, routePoints);
+            const severity = normalizeAlert(p.color);
+            const intensity = severity === 'RED' ? 1.0 : 0.6;
+            return [snapped[0], snapped[1], intensity];
+          });
+          L.heatLayer(heatPoints, {
+            radius: 30,
+            blur: 20,
+            maxZoom: 14,
+            gradient: {0.4: 'yellow', 0.8: 'orange', 1.0: 'red'}
+          }).addTo(layer);
+        }, 150);
+      }
     }
 
     // Fix 3b: Markers for RED, YELLOW, and GREEN alert events
@@ -1072,16 +1106,23 @@ function renderMaps(alerts, gateways, rmsPoints = [], mapAlerts = []) {
       const severity = normalizeAlert(point.color);
       const snapped = snapToRoute(point.lat, point.lon, routePoints);
       const markerPoint = jitterPoint(snapped[0], snapped[1], index);
-      const iconClass = 'bi-circle-fill'; // Use simple big filled circle for all alerts
       const iconColor = severity === 'RED'    ? '#ef4444'
                       : severity === 'YELLOW' ? '#f59e0b'
                       : '#10b981';                       // GREEN
 
+      // When focused: show a large pulsing highlighted icon for this specific alert
+      const iconHtml = isFocusedGateway
+        ? `<div style="position:relative; display:flex; align-items:center; justify-content:center;">
+            <div style="position:absolute; width:48px; height:48px; border-radius:50%; background:${iconColor}; opacity:0.3; animation:pulse 1.5s infinite;"></div>
+            <div style="color:${iconColor}; font-size:28px; filter:drop-shadow(0 2px 6px rgba(0,0,0,0.7)); display:flex; align-items:center; justify-content:center; z-index:1;"><i class="bi bi-circle-fill"></i></div>
+          </div>`
+        : `<div style="color:${iconColor}; font-size:20px; filter:drop-shadow(0 2px 4px rgba(0,0,0,0.6)); display:flex; align-items:center; justify-content:center;"><i class="bi bi-circle-fill"></i></div>`;
+
       const customIcon = L.divIcon({
         className: 'custom-alert-icon',
-        html: `<div style="color: ${iconColor}; font-size: 20px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6)); display: flex; align-items: center; justify-content: center;"><i class="bi ${iconClass}"></i></div>`,
-        iconSize: [24, 24],
-        iconAnchor: [12, 12],
+        html: iconHtml,
+        iconSize: isFocusedGateway ? [48, 48] : [24, 24],
+        iconAnchor: isFocusedGateway ? [24, 24] : [12, 12],
       });
 
       L.marker(markerPoint, { icon: customIcon })
@@ -3522,13 +3563,36 @@ async function loadRoutesConfigView() {
     if (contactsRes.ok) {
       const data = await contactsRes.json();
       const contacts = data.contacts || [];
+      window.allContacts = contacts; // save for limit check
+
+      // Show contact count per route and overall count badge
+      const totalContacts = contacts.length;
+      const MAX_PER_ROUTE = 5;
+      const contactsHeader = document.querySelector('#routes_config .section-head h3');
+      if (contactsHeader) {
+        // Count contacts per route
+        const countByRoute = {};
+        contacts.forEach(c => { countByRoute[c.route_id] = (countByRoute[c.route_id] || 0) + 1; });
+        const allRoutesAtLimit = (window.allRoutes || []).length > 0 &&
+          (window.allRoutes || []).every(r => (countByRoute[r.id] || 0) >= MAX_PER_ROUTE);
+        const addBtn = document.getElementById('addContactBtn');
+        if (addBtn) {
+          addBtn.title = allRoutesAtLimit ? `All routes have reached the ${MAX_PER_ROUTE}-contact limit` : '';
+        }
+      }
+
       contactsTable.innerHTML = contacts.map(c => {
         const routeName = (window.allRoutes || []).find(r => r.id === c.route_id)?.name || 'Unknown';
+        // Count contacts in this route
+        const routeCount = contacts.filter(x => x.route_id === c.route_id).length;
+        const limitBadge = routeCount >= 5
+          ? `<span style="background:#ef4444;color:#fff;font-size:10px;border-radius:4px;padding:1px 6px;margin-left:6px;">5/5 LIMIT</span>`
+          : `<span style="background:#22c55e;color:#fff;font-size:10px;border-radius:4px;padding:1px 6px;margin-left:6px;">${routeCount}/5</span>`;
         return `
         <tr>
           <td>${c.name}</td>
           <td>${c.mobile_number}</td>
-          <td>${routeName}</td>
+          <td>${routeName}${limitBadge}</td>
           <td>
             <button class="secondary btn-sm" onclick='openEditContact(${JSON.stringify(c).replace(/'/g, "&#39;")})'>Edit</button>
             <button class="danger btn-sm" onclick="deleteContact(${c.id}, '${c.name}')">Delete</button>
@@ -3612,10 +3676,22 @@ document.getElementById('addContactBtn')?.addEventListener('click', () => {
   document.getElementById('contactModalTitle').textContent = 'Add Contact';
   document.getElementById('contactForm').reset();
   document.getElementById('contactId').value = '';
-  
+
+  // Hide any previous error
+  const errDiv = document.getElementById('contactFormError');
+  if (errDiv) errDiv.style.display = 'none';
+
   const select = document.getElementById('contactRouteSelect');
-  select.innerHTML = '<option value="">Select Route</option>' + (window.allRoutes || []).map(r => `<option value="${r.id}">${r.name}</option>`).join('');
-  
+  // Mark routes that have hit the 5-contact limit
+  const countByRoute = {};
+  (window.allContacts || []).forEach(c => { countByRoute[c.route_id] = (countByRoute[c.route_id] || 0) + 1; });
+  select.innerHTML = '<option value="">Select Route</option>' +
+    (window.allRoutes || []).map(r => {
+      const cnt = countByRoute[r.id] || 0;
+      const atLimit = cnt >= 5;
+      return `<option value="${r.id}" ${atLimit ? 'disabled' : ''}>${r.name} (${cnt}/5${atLimit ? ' — FULL' : ''})</option>`;
+    }).join('');
+
   document.getElementById('contactModal').style.display = 'flex';
 });
 
@@ -3646,6 +3722,17 @@ window.openEditContact = function(contact) {
 document.getElementById('contactForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const id = document.getElementById('contactId').value;
+  const routeId = parseInt(document.getElementById('contactRouteSelect').value);
+
+  // Client-side pre-check: count contacts already in this route
+  if (!id) { // only on NEW contact creation
+    const existing = (window.allContacts || []).filter(c => c.route_id === routeId);
+    if (existing.length >= 5) {
+      showContactFormError(`⚠️ Contact limit reached: Only 5 contacts are allowed per route. Please delete an existing contact before adding a new one.`);
+      return;
+    }
+  }
+
   const payload = {
     name: document.getElementById('contactName').value,
     mobile_number: document.getElementById('contactPhone').value,
@@ -3655,28 +3742,53 @@ document.getElementById('contactForm')?.addEventListener('submit', async (e) => 
     section: document.getElementById('contactSection').value,
     sms_enabled: document.getElementById('contactSmsEnabled').checked,
     active: document.getElementById('contactActive').checked,
-    route_id: parseInt(document.getElementById('contactRouteSelect').value)
+    route_id: routeId
   };
-  
+
   const method = id ? 'PUT' : 'POST';
   const url = id ? `/api/v1/contacts/${id}` : '/api/v1/contacts';
-  
+
   try {
     const res = await fetch(url, {
       method,
-      headers: { 
+      headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${sessionStorage.getItem('uabams_session_token') || ''}`
       },
       body: JSON.stringify(payload)
     });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) {
+      // Parse the backend error message
+      let errMsg = 'Error saving contact';
+      try {
+        const errBody = await res.json();
+        errMsg = errBody.detail || errMsg;
+      } catch { errMsg = await res.text() || errMsg; }
+      showContactFormError(`⚠️ ${errMsg}`);
+      return;
+    }
     document.getElementById('contactModal').style.display = 'none';
     loadRoutesConfigView();
   } catch (err) {
-    alert(`Error saving contact: ${err.message}`);
+    showContactFormError(`⚠️ Error saving contact: ${err.message}`);
   }
 });
+
+function showContactFormError(msg) {
+  let errDiv = document.getElementById('contactFormError');
+  if (!errDiv) {
+    errDiv = document.createElement('div');
+    errDiv.id = 'contactFormError';
+    errDiv.style.cssText = 'background:#fef2f2;color:#b91c1c;border:1px solid #fca5a5;border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:13px;line-height:1.5;';
+    const form = document.getElementById('contactForm');
+    form.parentNode.insertBefore(errDiv, form);
+  }
+  errDiv.textContent = msg;
+  errDiv.style.display = 'block';
+  // Auto-hide after 8 seconds
+  clearTimeout(errDiv._hideTimer);
+  errDiv._hideTimer = setTimeout(() => { errDiv.style.display = 'none'; }, 8000);
+}
 
 window.deleteContact = async function(id, name) {
   if (confirm(`Delete contact "${name}"?`)) {

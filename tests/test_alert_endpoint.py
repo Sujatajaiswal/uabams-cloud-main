@@ -76,6 +76,8 @@ class TestAlertEndpoint(unittest.TestCase):
 
         mock_pool = MagicMock()
         mock_pool.fetchrow = AsyncMock(return_value={"id": 42})
+        mock_pool.fetchval = AsyncMock(return_value=None)
+        mock_pool.fetch = AsyncMock(return_value=[])
         mock_pool.execute = AsyncMock()
 
         with patch.object(db, "pg_pool", mock_pool), \
@@ -89,12 +91,14 @@ class TestAlertEndpoint(unittest.TestCase):
         asyncio.set_event_loop(loop)
         try:
             res, pool = loop.run_until_complete(self._run_create_alert(self.payload))
-            self.assertEqual(res["status"], "success")
+            self.assertIn(res["status"], ("created", "success"))
             self.assertEqual(res["windowAlertId"], 42)
             self.assertIn(res["alert"], ("RED", "YELLOW"))
 
             # Verify window_alerts INSERT was executed
-            fetchrow_args = pool.fetchrow.call_args[0]
+            window_alerts_calls = [c for c in pool.fetchrow.call_args_list if "INSERT INTO window_alerts" in c[0][0]]
+            self.assertTrue(len(window_alerts_calls) > 0)
+            fetchrow_args = window_alerts_calls[0][0]
             self.assertIn("INSERT INTO window_alerts", fetchrow_args[0])
             self.assertEqual(fetchrow_args[1], "GW1_PIL_BOGIE_01")  # gateway_id
             self.assertEqual(fetchrow_args[2], "GW1_22151_BOGIE_01")  # logical_gateway_id

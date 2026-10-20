@@ -97,8 +97,20 @@ async def get_contacts(route_id: Optional[int] = None):
         contacts = await db.pg_pool.fetch("SELECT * FROM contacts ORDER BY name ASC")
     return {"contacts": serialize([dict(c) for c in contacts])}
 
+MAX_CONTACTS_PER_ROUTE = 5
+
 @router.post("/api/v1/contacts")
 async def create_contact(data: ContactCreateRequest):
+    # Enforce 5-contact-per-route limit
+    existing_count = await db.pg_pool.fetchval(
+        "SELECT COUNT(*) FROM contacts WHERE route_id = $1",
+        data.route_id
+    )
+    if existing_count >= MAX_CONTACTS_PER_ROUTE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Contact limit reached: Only {MAX_CONTACTS_PER_ROUTE} contacts are allowed per route. Please delete an existing contact before adding a new one."
+        )
     try:
         row = await db.pg_pool.fetchrow(
             "INSERT INTO contacts (name, mobile_number, designation, zone, division, section, route_id, sms_enabled, active) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *",

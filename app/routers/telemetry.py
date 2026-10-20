@@ -28,6 +28,7 @@ def generate_pdf_report(title: str, headers: list, rows: list) -> bytes:
     doc.build(elements)
     return buffer.getvalue()
 
+import asyncio
 import json
 import os
 import uuid
@@ -64,6 +65,7 @@ from app.utils import (
 router = APIRouter()
 
 TIME_DOMAIN_DIR = os.environ.get("TIME_DOMAIN_DIR", "/app/time_domain")
+_background_tasks: set[asyncio.Task] = set()
 
 async def mark_gateway_online(gateway_id: str, now: datetime) -> None:
     await db.pg_pool.execute("""
@@ -280,6 +282,28 @@ async def process_and_ingest_archive(
     except Exception as exc:
         pass
 
+    # ── Fire-and-forget CRIS export (never blocks the gateway response) ─────────────
+    async def _trigger_cris_export() -> None:
+        try:
+            from app.cris.exporter import CrisExporter
+            await CrisExporter().export_all_for_archive(
+                archive_sha256=actual_sha256,
+                gateway_id=gateway_id,
+                train_id=resolved_train_id,
+                session_name=session_name,
+                logical_gateway_id=logical_gateway_id,
+            )
+        except Exception as cris_exc:
+            print(f"[CRIS] Background export failed for archive {actual_sha256}: {cris_exc}")
+
+    try:
+        task = asyncio.create_task(_trigger_cris_export())
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+    except RuntimeError:
+        # No running event loop in test context — skip silently
+        pass
+
     return {
         "status": "success",
         "sha256": actual_sha256,
@@ -337,8 +361,9 @@ async def heartbeat(
     for result in data.commandResults:
         command = await db.pg_pool.fetchrow("SELECT type, status FROM gateway_commands WHERE command_id = $1 AND gateway_id = $2", result.commandId, gateway_id)
         if not command:
-            raise HTTPException(status_code=404, detail=f"Command '{result.commandId}' not found for this gateway")
-        if command.get("type") != result.type:
+            # Stale or unrecognized command ID should not abort the entire heartbeat
+            continue
+        if result.type != "unknown" and command.get("type") != result.type:
             raise HTTPException(status_code=400, detail=f"Command type mismatch for '{result.commandId}'")
         if command.get("status") in ("success", "failed", "superseded", "ignored"):
             continue
@@ -357,22 +382,43 @@ async def heartbeat(
         if hasattr(result, "reason") and result.reason is not None:
             res_dict["reason"] = result.reason
         if hasattr(result, "nodes") and result.nodes is not None:
-            nodes_dict = result.nodes.model_dump(exclude_unset=True) if hasattr(result.nodes, "model_dump") else result.nodes.dict(exclude_unset=True)
-            res_dict["nodes"] = nodes_dict
+            if isinstance(result.nodes, dict):
+                res_dict["nodes"] = result.nodes
+            else:
+                nodes_dict = result.nodes.model_dump(exclude_unset=True) if hasattr(result.nodes, "model_dump") else result.nodes.dict(exclude_unset=True)
+                res_dict["nodes"] = nodes_dict
         
         res_json = json.dumps(res_dict)
         await db.pg_pool.execute("UPDATE gateway_commands SET status = $1, result = $2::jsonb, completed_at = $3 WHERE command_id = $4 AND gateway_id = $5", result.status, res_json, completed_at, result.commandId, gateway_id)
 
     await db.pg_pool.execute("UPDATE gateways SET last_seen = $1, status = 'active', last_heartbeat = $1 WHERE gateway_id = $2", now, gateway_id)
-    await db.pg_pool.execute("INSERT INTO heartbeat_logs (gateway_id, train_id, logical_gateway_id, received_at, adxl_state, encoder_state) VALUES ($1, $2, $3, $4, $5, $6)", gateway_id, data.trainId, data.logicalGatewayId, now, data.adxlState, data.encoderState)
+    # Only store current heartbeat status (no history logs)
     await db.pg_pool.execute("""
-        INSERT INTO gateway_status (gateway_id, train_id, online, last_heartbeat, adxl_state, adxl_uptime, adxl_faults, adxl_fw_version, adxl_cal_version, encoder_state, encoder_uptime, encoder_faults, encoder_fw_version, encoder_cal_version)
-        VALUES ($1, $2, TRUE, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        INSERT INTO gateway_status (
+            gateway_id, train_id, logical_gateway_id, online, latitude, longitude,
+            last_heartbeat, adxl_state, adxl_uptime, adxl_faults,
+            adxl_fw_version, adxl_cal_version, encoder_state, encoder_uptime,
+            encoder_faults, encoder_fw_version, encoder_cal_version
+        )
+        VALUES ($1, $2, $3, TRUE, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         ON CONFLICT (gateway_id) DO UPDATE SET
-            train_id = COALESCE(EXCLUDED.train_id, gateway_status.train_id), online = TRUE, last_heartbeat = EXCLUDED.last_heartbeat,
-            adxl_state = EXCLUDED.adxl_state, adxl_uptime = EXCLUDED.adxl_uptime, adxl_faults = EXCLUDED.adxl_faults, adxl_fw_version = EXCLUDED.adxl_fw_version, adxl_cal_version = EXCLUDED.adxl_cal_version,
-            encoder_state = EXCLUDED.encoder_state, encoder_uptime = EXCLUDED.encoder_uptime, encoder_faults = EXCLUDED.encoder_faults, encoder_fw_version = EXCLUDED.encoder_fw_version, encoder_cal_version = EXCLUDED.encoder_cal_version
-    """, gateway_id, data.trainId, now, data.adxlState, data.adxlUptime, data.adxlFaults, data.adxlFwVersion, data.adxlCalVersion, data.encoderState, data.encoderUptime, data.encoderFaults, data.encoderFwVersion, data.encoderCalVersion)
+            train_id = COALESCE(EXCLUDED.train_id, gateway_status.train_id),
+            logical_gateway_id = COALESCE(EXCLUDED.logical_gateway_id, gateway_status.logical_gateway_id),
+            online = TRUE,
+            latitude = COALESCE(EXCLUDED.latitude, gateway_status.latitude),
+            longitude = COALESCE(EXCLUDED.longitude, gateway_status.longitude),
+            last_heartbeat = EXCLUDED.last_heartbeat,
+            adxl_state = EXCLUDED.adxl_state,
+            adxl_uptime = EXCLUDED.adxl_uptime,
+            adxl_faults = EXCLUDED.adxl_faults,
+            adxl_fw_version = EXCLUDED.adxl_fw_version,
+            adxl_cal_version = EXCLUDED.adxl_cal_version,
+            encoder_state = EXCLUDED.encoder_state,
+            encoder_uptime = EXCLUDED.encoder_uptime,
+            encoder_faults = EXCLUDED.encoder_faults,
+            encoder_fw_version = EXCLUDED.encoder_fw_version,
+            encoder_cal_version = EXCLUDED.encoder_cal_version
+    """, gateway_id, data.trainId, data.logicalGatewayId, data.latitude, data.longitude, now, data.adxlState, data.adxlUptime, data.adxlFaults, data.adxlFwVersion, data.adxlCalVersion, data.encoderState, data.encoderUptime, data.encoderFaults, data.encoderFwVersion, data.encoderCalVersion)
 
 
 
@@ -694,6 +740,15 @@ async def create_alert(
             data.logicalGatewayId = logical_gateway_id
 
     from app.models import AxisAlertItem
+    # If root-level lat/lon are absent, fall back to the first alert item's coordinates.
+    # Firmware sends coordinates only inside alerts[], not at the window level.
+    if data.alerts and (data.latitude is None or data.longitude is None):
+        first = data.alerts[0]
+        if data.latitude is None:
+            data.latitude = first.latitude
+        if data.longitude is None:
+            data.longitude = first.longitude
+
     if data.peakValueG is not None and not data.alerts:
         data.alerts = [
             AxisAlertItem(
@@ -786,69 +841,83 @@ async def create_alert(
             "alert": axis_color,
         })
 
-        # Evaluate route-wise limits and send SMS
-        if item.speedKmph > 80:
+        # ── Automatic SMS for RED (Critical) and YELLOW (Warning) alerts ─────
+        # Fires for any RED or YELLOW axis event, regardless of speed.
+        # Route assignment and 50-m deduplication window are still enforced.
+        if axis_color in ("RED", "YELLOW"):
+            print(f"[DEBUG SMS] axis_color is {axis_color}, fetching route info for train_no={train_no}")
             route_info = await db.pg_pool.fetchrow(
                 "SELECT r.id, r.name, r.vertical_limit, r.lateral_limit FROM trains t JOIN routes r ON t.route_id = r.id WHERE t.train_no = $1 LIMIT 1",
                 train_no
             )
+            print(f"[DEBUG SMS] route_info: {route_info}")
             if route_info:
-                # Determine limit based on axis
                 is_vertical = item.axis.upper() == "Z"
                 is_lateral = item.axis.upper() == "Y"
-                
+
                 route_threshold = None
                 if is_vertical:
                     route_threshold = route_info.get("vertical_limit")
                 elif is_lateral:
                     route_threshold = route_info.get("lateral_limit")
-                
-                if route_threshold and item.peakValueG >= route_threshold:
-                    # Check for 50m window filtering
-                    # Look for higher peaks in the same axis within +/- 0.050 km (50m) in the last hour
-                    recent_higher_peak = await db.pg_pool.fetchval(
-                        """
-                        SELECT 1 FROM alert_events 
-                        WHERE train_no = $1 
-                          AND axis = $2 
-                          AND location_km BETWEEN $3 AND $4
-                          AND peak_value_g >= $5
-                          AND created_at >= NOW() - INTERVAL '1 hour'
-                        LIMIT 1
-                        """,
-                        train_no, item.axis, item.locationKm - 0.050, item.locationKm + 0.050, item.peakValueG
+
+                # For RED/YELLOW we send SMS even if no route threshold is set —
+                # use the axis threshold from the payload as fallback.
+                effective_threshold = route_threshold or item.thresholdG or 0
+
+                # 50 m deduplication: skip if an equal-or-higher peak was already
+                # sent for the same train+axis in the same location in the last hour.
+                recent_higher_peak = await db.pg_pool.fetchval(
+                    """
+                    SELECT 1 FROM alert_events
+                    WHERE train_no = $1
+                      AND axis = $2
+                      AND location_km BETWEEN $3 AND $4
+                      AND peak_value_g >= $5
+                      AND created_at >= NOW() - INTERVAL '1 hour'
+                      AND created_at < $6
+                    LIMIT 1
+                    """,
+                    train_no, item.axis,
+                    (item.locationKm or 0) - 0.050,
+                    (item.locationKm or 0) + 0.050,
+                    item.peakValueG,
+                    created_at
+                )
+                print(f"[DEBUG SMS] recent_higher_peak: {recent_higher_peak}")
+
+                if not recent_higher_peak:
+                    # Fetch active contacts for this route (up to 5 enforced at insert time)
+                    contacts = await db.pg_pool.fetch(
+                        "SELECT id, mobile_number FROM contacts WHERE route_id = $1 AND sms_enabled = TRUE AND active = TRUE",
+                        route_info.get("id")
                     )
-                    
-                    if not recent_higher_peak:
-                        # Fetch relevant contacts
-                        contacts = await db.pg_pool.fetch(
-                            "SELECT id, mobile_number FROM contacts WHERE route_id = $1 AND sms_enabled = TRUE AND active = TRUE",
-                            route_info.get("id")
+                    severity_label = "CRITICAL" if axis_color == "RED" else "WARNING"
+                    fault_type = "Vertical" if is_vertical else ("Lateral" if is_lateral else item.axis.upper())
+
+                    # Format must exactly match DLT template:
+                    # apnaUABAMSSite:GW1_PIL_BOGIE_02 Train No: 22152 Route Name: TestRoute Fault Type: Vertical Peak: 9.50g Threshold: 8.00g Speed: 120.50Kmph Lat: 12.9716 Lon: 77.5946 Feature: Bridge
+                    msg = (f"apnaUABAMSSite:{gateway_id} "
+                           f"Train No: {train_no} "
+                           f"Route Name: {route_info.get('name')} "
+                           f"Fault Type: {fault_type} "
+                           f"Peak: {item.peakValueG:.2f}g "
+                           f"Threshold: {float(effective_threshold):.2f}g "
+                           f"Speed: {item.speedKmph:.2f}Kmph "
+                           f"Lat: {item.latitude} Lon: {item.longitude} "
+                           f"Feature: Track")
+
+                    from app.utils import send_sms
+                    for contact in contacts:
+                        success, reason = send_sms(contact.get("mobile_number"), msg)
+                        status = "SENT" if success else "FAILED"
+                        print(f"[SMS {status}] {severity_label} alert → {contact.get('mobile_number')}: {reason or 'ok'}")
+
+                        # Log the notification
+                        await db.pg_pool.execute(
+                            "INSERT INTO alert_notifications (alert_id, contact_id, notification_type, status, failure_reason) VALUES ($1, $2, $3, $4, $5)",
+                            window_alert_id, contact.get("id"), "SMS", status, reason
                         )
-                        # Assume track feature can be looked up or passed, for now use a placeholder
-                        nearest_feature = "Unknown"
-                        
-                        msg = (f"apnaUABAMSSite: {gateway_id} "
-                               f"Train No: {train_no} "
-                               f"Route Name: {route_info.get('name')} "
-                               f"Fault Type: {'Vertical' if is_vertical else 'Lateral'} "
-                               f"Peak: {item.peakValueG:.2f}g "
-                               f"Threshold: {route_threshold}g "
-                               f"Speed: {item.speedKmph:.2f}kmph "
-                               f"Lat: {item.latitude} "
-                               f"Lon: {item.longitude} "
-                               f"Feature: {nearest_feature}")
-                        
-                        from app.utils import send_sms
-                        for contact in contacts:
-                            success, reason = send_sms(contact.get("mobile_number"), msg)
-                            status = "SENT" if success else "FAILED"
-                            
-                            # Log the notification
-                            await db.pg_pool.execute(
-                                "INSERT INTO alert_notifications (alert_id, contact_id, notification_type, status, failure_reason) VALUES ($1, $2, $3, $4, $5)",
-                                window_alert_id, contact.get("id"), "SMS", status, reason
-                            )
 
 
     await mark_gateway_online(gateway_id, now)
@@ -907,6 +976,41 @@ async def train_position(train_no: str, gateway_id: str | None = None):
     query += " ORDER BY created_at DESC, position_mm DESC LIMIT 1"
     
     latest = await db.pg_pool.fetchrow(query, *args)
+    if not latest:
+        # Fallback: try the most recent real-time alert with a valid GPS fix.
+        # This ensures the train marker is visible even when no RMS records exist
+        # (e.g., the gateway has only sent heartbeats + alert events so far).
+        fallback_query = (
+            "SELECT gateway_id AS \"gatewayId\", latitude, longitude, "
+            "position_mm AS \"positionMm\", speed_kmph AS \"speedKmph\", created_at AS \"createdAt\" "
+            "FROM alert_events "
+            "WHERE train_no = $1 AND latitude IS NOT NULL AND latitude != 0 "
+            "AND longitude IS NOT NULL AND longitude != 0"
+        )
+        fallback_args = [train_no]
+        if gateway_id:
+            fallback_query += " AND gateway_id = $2"
+            fallback_args.append(gateway_id)
+        fallback_query += " ORDER BY created_at DESC LIMIT 1"
+        latest = await db.pg_pool.fetchrow(fallback_query, *fallback_args)
+
+    if not latest:
+        # Fallback: check current heartbeat location from gateway_status
+        hb_query = (
+            "SELECT gateway_id AS \"gatewayId\", latitude, longitude, "
+            "NULL::integer AS \"positionMm\", NULL::double precision AS \"speedKmph\", last_heartbeat AS \"createdAt\" "
+            "FROM gateway_status "
+            "WHERE (train_id = $1 OR gateway_id IN (SELECT gateway_id FROM gateways WHERE train_id = $1)) "
+            "AND latitude IS NOT NULL AND latitude != 0 "
+            "AND longitude IS NOT NULL AND longitude != 0"
+        )
+        hb_args = [train_no]
+        if gateway_id:
+            hb_query += " AND gateway_id = $2"
+            hb_args.append(gateway_id)
+        hb_query += " ORDER BY last_heartbeat DESC LIMIT 1"
+        latest = await db.pg_pool.fetchrow(hb_query, *hb_args)
+
     if not latest:
         return {"trainNo": train_no, "gatewayId": gateway_id, "position": None}
 

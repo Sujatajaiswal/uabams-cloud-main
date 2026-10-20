@@ -432,7 +432,8 @@ async def list_gateway_commands(gateway_id: str, request: Request):
 @router.get("/api/v1/trains/{train_no}/gateways/{gateway_id}/details")
 async def gateway_details(train_no: str, gateway_id: str):
     gateway_query = """
-        SELECT gateway_id AS "gatewayId", train_id AS "trainId", online, last_heartbeat AS "lastHeartbeat",
+        SELECT gateway_id AS "gatewayId", train_id AS "trainId", logical_gateway_id AS "logicalGatewayId", online,
+               latitude, longitude, last_heartbeat AS "lastHeartbeat",
                adxl_state AS "adxlState", adxl_uptime AS "adxlUptime", adxl_faults AS "adxlFaults",
                adxl_fw_version AS "adxlFwVersion", adxl_cal_version AS "adxlCalVersion",
                encoder_state AS "encoderState", encoder_uptime AS "encoderUptime",
@@ -554,8 +555,8 @@ async def gateway_details(train_no: str, gateway_id: str):
             "latestPeakG": latest_alert.get("peakValueG") if latest_alert else fallback_peak_g,
             "latestAlert": latest_alert.get("alert") if latest_alert else fallback_alert,
             "latestLocation": {
-                "latitude": latest_alert.get("latitude") if latest_alert else latest_peak.get("latitude") if latest_peak else latest_rms.get("latitude") if latest_rms else None,
-                "longitude": latest_alert.get("longitude") if latest_alert else latest_peak.get("longitude") if latest_peak else latest_rms.get("longitude") if latest_rms else None,
+                "latitude": latest_alert.get("latitude") if latest_alert else latest_peak.get("latitude") if latest_peak else latest_rms.get("latitude") if latest_rms else (gateway.get("latitude") if gateway else None),
+                "longitude": latest_alert.get("longitude") if latest_alert else latest_peak.get("longitude") if latest_peak else latest_rms.get("longitude") if latest_rms else (gateway.get("longitude") if gateway else None),
             },
             "latestArchive": serialize(latest_archive) if latest_archive else None,
         },

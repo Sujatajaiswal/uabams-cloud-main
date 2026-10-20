@@ -84,22 +84,42 @@ def is_operator_authenticated(request: Request) -> bool:
 
 def send_sms(mobile_number: str, message: str) -> tuple[bool, str]:
     """
-    Mock SMS dispatch. 
-    Will be replaced with company API later.
+    Send SMS via Qikberry API.
     """
     print(f"[SMS DISPATCH] To {mobile_number}: {message}")
     
-    # Mock successful dispatch
-    # Later replace this block with the actual company API integration
-    success = True
-    reason = ""
+    qikberry_url = "https://rest.qikberry.ai/v1/sms/messages"
+    # Ensure you set these in your environment variables, defaults provided by user
+    sms_sender = os.environ.get("SMS_SENDER", "IRAPNA")
+    sms_service = os.environ.get("SMS_SERVICE", "SI")
+    sms_template_id = os.environ.get("SMS_TEMPLATE_ID", "1077127650088578029")
+    auth_token = os.environ.get("QIKBERRY_AUTH_TOKEN", "")
+
+    temp_cont = {
+        "to": mobile_number,            
+        "sender": sms_sender,     
+        "service": sms_service, 
+        "template_id": sms_template_id,
+        "message": message
+    }
     
-    if success:
-        print(f"[SMS] Successfully sent to {mobile_number}")
-        return True, ""
-    else:
-        print(f"[SMS] Failed to send to {mobile_number}")
-        return False, "API not implemented"
+    try:
+        req = urllib.request.Request(
+            qikberry_url, 
+            data=json.dumps(temp_cont).encode('utf-8'),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {auth_token}"
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req) as response:
+            res_body = response.read().decode('utf-8')
+            print(f"[SMS] Successfully sent to {mobile_number}. Response: {res_body}")
+            return True, ""
+    except Exception as e:
+        print(f"[SMS] Failed to send to {mobile_number}: {e}")
+        return False, str(e)
 
 def is_admin_authenticated(request: Request) -> bool:
     payload = operator_session_payload(request)
@@ -234,7 +254,9 @@ def verify_gateway_token(token: str, gateway_id: str) -> dict[str, Any]:
     except jwt.PyJWTError as exc:
         raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
 
-    if payload.get("sub") != gateway_id:
+    sub = payload.get("sub")
+    from app.middleware.auth import normalize_gateway_id
+    if sub != gateway_id and normalize_gateway_id(sub) != normalize_gateway_id(gateway_id):
         raise HTTPException(status_code=401, detail="Token does not belong to this gateway")
     return payload
 

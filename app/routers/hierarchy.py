@@ -130,13 +130,20 @@ async def train_dashboard(train_no: str, request: Request):
 
         statuses = []
         if gateway_ids:
-            statuses = await conn.fetch('SELECT gateway_id AS "gatewayId", train_id AS "trainId", online, last_heartbeat AS "lastHeartbeat" FROM gateway_status WHERE gateway_id = ANY($1)', gateway_ids)
+            statuses = await conn.fetch('SELECT gateway_id AS "gatewayId", train_id AS "trainId", online, latitude, longitude, last_heartbeat AS "lastHeartbeat" FROM gateway_status WHERE gateway_id = ANY($1)', gateway_ids)
 
         status_by_id = {item["gatewayId"]: dict(item) for item in statuses}
         now_dt = utc_now()
         gateway_cards = []
 
         for gateway_id in gateway_ids:
+            latest_alert_row = await conn.fetchrow('''
+                SELECT alert, peak_value_g, latitude, longitude
+                FROM alert_events
+                WHERE train_no = $1 AND gateway_id = $2 AND session_status != 'archived'
+                ORDER BY created_at DESC LIMIT 1
+            ''', train_no, gateway_id)
+
             latest_peak = await conn.fetchrow('''
                 SELECT axes, latitude, longitude
                 FROM peak_records 
@@ -181,15 +188,30 @@ async def train_dashboard(train_no: str, request: Request):
                 }
 
             fallback_peak_g, fallback_alert = None, None
-            if latest_peak:
+            if latest_alert_row:
+                fallback_peak_g = latest_alert_row.get("peak_value_g")
+                fallback_alert = latest_alert_row.get("alert")
+            elif latest_peak:
                 fallback_peak_g, fallback_alert = _axis_summary(latest_peak.get("axes"))
-            if not fallback_peak_g and latest_rms:
+            elif latest_rms:
                 fallback_peak_g, fallback_alert = _axis_summary(latest_rms.get("axes"))
 
             card["latestPeakG"] = fallback_peak_g
             card["latestAlert"] = fallback_alert
-            card["latestLatitude"] = latest_peak.get("latitude") if latest_peak else latest_rms.get("latitude") if latest_rms else None
-            card["latestLongitude"] = latest_peak.get("longitude") if latest_peak else latest_rms.get("longitude") if latest_rms else None
+            card["latestLatitude"] = (
+                latest_alert_row.get("latitude") if latest_alert_row and latest_alert_row.get("latitude")
+                else latest_peak.get("latitude") if latest_peak and latest_peak.get("latitude")
+                else latest_rms.get("latitude") if latest_rms and latest_rms.get("latitude")
+                else card.get("latitude") if card and card.get("latitude")
+                else None
+            )
+            card["latestLongitude"] = (
+                latest_alert_row.get("longitude") if latest_alert_row and latest_alert_row.get("longitude")
+                else latest_peak.get("longitude") if latest_peak and latest_peak.get("longitude")
+                else latest_rms.get("longitude") if latest_rms and latest_rms.get("longitude")
+                else card.get("longitude") if card and card.get("longitude")
+                else None
+            )
             # Include logicalGatewayId so the UI can display the directional identity
             card["logicalGatewayId"] = logical_id_map.get(gateway_id)
 
