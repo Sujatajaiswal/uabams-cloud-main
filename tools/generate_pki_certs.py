@@ -89,19 +89,69 @@ def generate_device_cert(gateway_id: str, ca_key, ca_cert, out_dir: str):
 
     print(f"Generated Device Cert for [{gateway_id}]: {dev_crt_path}")
 
+def generate_server_cert(ca_key, ca_cert, out_dir: str, server_ip: str = "20.8.1.15"):
+    server_key_path = os.path.join(out_dir, "server.key")
+    server_crt_path = os.path.join(out_dir, "server.crt")
+
+    if os.path.exists(server_key_path) and os.path.exists(server_crt_path):
+        print(f"Server SSL cert already exists at: {server_crt_path}")
+        return
+
+    import ipaddress
+    server_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+    subject = x509.Name([
+        x509.NameAttribute(NameOID.COUNTRY_NAME, "IN"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "UABAMS Cloud Server"),
+        x509.NameAttribute(NameOID.COMMON_NAME, server_ip),
+    ])
+
+    alt_names = [x509.DNSName("localhost")]
+    try:
+        alt_names.append(x509.IPAddress(ipaddress.ip_address(server_ip)))
+    except ValueError:
+        alt_names.append(x509.DNSName(server_ip))
+
+    server_cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(ca_cert.subject)
+        .public_key(server_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.now(timezone.utc))
+        .not_valid_after(datetime.now(timezone.utc) + timedelta(days=1825))
+        .add_extension(x509.SubjectAlternativeName(alt_names), critical=False)
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .sign(ca_key, hashes.SHA256())
+    )
+
+    with open(server_key_path, "wb") as f:
+        f.write(server_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=serialization.NoEncryption(),
+        ))
+
+    with open(server_crt_path, "wb") as f:
+        f.write(server_cert.public_bytes(serialization.Encoding.PEM))
+
+    print(f"Generated Server SSL Certificate: {server_crt_path}")
+
 def main():
-    parser = argparse.ArgumentParser(description="Generate Root CA and Device X.509 Certificates")
+    parser = argparse.ArgumentParser(description="Generate Root CA, Server SSL, and Device X.509 Certificates")
     parser.add_argument("--gateways", type=str, default="GW_UABAMS_BOGIE_01,GW_UABAMS_BOGIE_02", help="Comma separated gateway IDs")
+    parser.add_argument("--server-ip", type=str, default="20.8.1.15", help="Server IP or domain for HTTPS")
     parser.add_argument("--out-dir", type=str, default="certs", help="Output directory for certificates")
     args = parser.parse_args()
 
     ca_key, ca_cert = generate_ca(args.out_dir)
+    generate_server_cert(ca_key, ca_cert, args.out_dir, args.server_ip)
     
     gateway_list = [g.strip() for g in args.gateways.split(",") if g.strip()]
     for gid in gateway_list:
         generate_device_cert(gid, ca_key, ca_cert, args.out_dir)
 
-    print(f"\nBatch Certificate Generation Complete for {len(gateway_list)} gateways in '{args.out_dir}'!")
+    print(f"\nBatch Certificate Generation Complete in '{args.out_dir}'!")
 
 if __name__ == "__main__":
     main()

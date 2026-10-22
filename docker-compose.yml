@@ -80,6 +80,20 @@ services:
       - ./uabams-data/sftp_incoming:/home/uabams_upload/incoming
     restart: always
 
+  # ── Nginx HTTPS Reverse Proxy (Port 443 / Port 80) ──────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: uabams_nginx
+    restart: always
+    ports:
+      - "80:80"       # HTTP (redirects to HTTPS)
+      - "443:443"     # HTTPS (SSL Termination)
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - uabams-cloud
+
 # ── No named volumes needed — all data lives on the host at ./uabams-data/ ──
 volumes:
   pgdata:

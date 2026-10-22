@@ -171,7 +171,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-BASE_URL = "https://uabams-cloud-1.onrender.com"
+BASE_URL = "https://20.8.1.15"  # Jio Static IP via Nginx HTTPS (Port 443)
 GATEWAY_ID = "GW_UABAMS_BOGIE_01"
 TRAIN_ID = "019456"
 
