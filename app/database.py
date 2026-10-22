@@ -34,13 +34,12 @@ def get_settings() -> dict[str, object]:
         "operator_password": os.getenv("OPERATOR_PASSWORD", "operator123"),
         "cloud_public_base_url": os.getenv("CLOUD_PUBLIC_BASE_URL", "").rstrip("/"),
         # Gateway SSH upload settings
-        "ssh_host": os.getenv("SSH_HOST", "uabams-cloud-1.onrender.com"),
-        "ssh_port": int(os.getenv("SSH_PORT") or "22"),
+        "ssh_host": os.getenv("SSH_HOST", "20.8.1.15"),
+        "ssh_port": int(os.getenv("SSH_PORT") or "2222"),
         "ssh_user": os.getenv("SSH_USER", "uabams_upload"),
         "ssh_host_key": os.getenv(
             "SSH_HOST_KEY",
-            "uabams-cloud-1.onrender.com ssh-ed25519 "
-            "AAAAC3NzaC1lZDI1NTE5AAAAICa5f57B8H7wW70QGqE/D8w4bHcxPDmlcnNf2V2Rl0tH"
+            "[20.8.1.15]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFQFEVhatPXMJx7b0Z0uoRqZIkS8qEDLFb8WoeI0eksr"
         ),
         "authorized_keys_path": os.getenv(
             "AUTHORIZED_KEYS_PATH",

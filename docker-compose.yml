@@ -6,16 +6,16 @@ services:
     container_name: uabams_db
     restart: always
     environment:
-      POSTGRES_DB: uabams_db
-      POSTGRES_USER: uabams_user
-      POSTGRES_PASSWORD: uabams_pass
+      POSTGRES_DB: ${POSTGRES_DB:-uabams_db}
+      POSTGRES_USER: ${POSTGRES_USER:-uabams_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "5433:5432"          # expose so pgAdmin / DBeaver can connect locally
     volumes:
       # Use a named volume for the DB to avoid Windows filesystem permission errors
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U uabams_user -d uabams_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-uabams_user} -d ${POSTGRES_DB:-uabams_db}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -31,27 +31,27 @@ services:
         condition: service_healthy   # wait until Postgres is ready
     environment:
       DATABASE_TYPE: postgres
-      DATABASE_URL: postgresql://uabams_user:uabams_pass@postgres:5432/uabams_db
-      JWT_SECRET: local-docker-change-me
-      JWT_ALGORITHM: HS256
-      ADMIN_RESET_KEY: local-admin-key
-      GATEWAY_API_KEY_GW01: local-gw1-key
-      GATEWAY_API_KEY_GW02: local-gw2-key
-      OPERATOR_USERNAME: operator
-      OPERATOR_PASSWORD: operator123
-      ADMIN_USERNAME: admin
-      ADMIN_PASSWORD: admin123
-      CLOUD_PUBLIC_BASE_URL: "${CLOUD_PUBLIC_BASE_URL:-http://20.8.1.15:8000}"  # changed by shobhit dated 9-9-26
-      SSH_HOST: "20.8.1.15"  # changed by shobhit dated 9-9-26
-      SSH_PORT: "2222"
-      SSH_USER: "uabams_upload"
-      SSH_HOST_KEY: "[20.8.1.15]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFQFEVhatPXMJx7b0Z0uoRqZIkS8qEDLFb8WoeI0eksr"  # changed by shobhit dated 9-9-26
+      DATABASE_URL: postgresql://${POSTGRES_USER:-uabams_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-uabams_db}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      ADMIN_RESET_KEY: ${ADMIN_RESET_KEY}
+      GATEWAY_API_KEY_GW01: ${GATEWAY_API_KEY_GW01}
+      GATEWAY_API_KEY_GW02: ${GATEWAY_API_KEY_GW02}
+      OPERATOR_USERNAME: ${OPERATOR_USERNAME:-operator}
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      CLOUD_PUBLIC_BASE_URL: "${CLOUD_PUBLIC_BASE_URL:-http://20.8.1.15:8000}"
+      SSH_HOST: "${SSH_HOST:-20.8.1.15}"
+      SSH_PORT: "${SSH_PORT:-2222}"
+      SSH_USER: "${SSH_USER:-uabams_upload}"
+      SSH_HOST_KEY: "${SSH_HOST_KEY:-[20.8.1.15]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFQFEVhatPXMJx7b0Z0uoRqZIkS8qEDLFb8WoeI0eksr}"
       UPLOAD_BASE_DIR: "/app/incoming"
       AUTHORIZED_KEYS_PATH: "/app/sftp_keys/authorized_keys"
       TIME_DOMAIN_DIR: "/app/time_domain"
       # MSG91 SMS gateway — https://msg91.com
-      MSG91_AUTH_KEY: "571412AifEc4IN9tq6aa8edfeP1"
-      MSG91_SENDER_ID: "UABAMS"
+      MSG91_AUTH_KEY: "${MSG91_AUTH_KEY}"
+      MSG91_SENDER_ID: "${MSG91_SENDER_ID:-UABAMS}"
       # Qikberry SMS Gateway
       QIKBERRY_AUTH_TOKEN: "${QIKBERRY_AUTH_TOKEN}"
       SMS_SENDER: "${SMS_SENDER:-IRAPNA}"
