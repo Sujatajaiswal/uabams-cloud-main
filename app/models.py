@@ -233,3 +233,21 @@ class UserUpdateRequest(BaseModel):
     can_reset_session: bool | None = None
     can_view_logs: bool | None = None
     can_view_reports: bool | None = None
+
+
+class AuthorizedGatewayCreate(BaseModel):
+    gatewayId: str = Field(..., description="Unique ID of the approved gateway")
+    expectedCertFingerprint: str = Field(..., description="Expected SHA-256 fingerprint of the client certificate")
+    isActive: bool = Field(default=True, description="Whether the gateway is permitted to connect")
+
+
+class AuthorizedGatewayUpdate(BaseModel):
+    expectedCertFingerprint: str | None = Field(None, description="Updated certificate fingerprint for rotation")
+    isActive: bool | None = Field(None, description="Whether the gateway is enabled or disabled")
+
+
+class AuthorizedGatewayResponse(BaseModel):
+    gatewayId: str
+    expectedCertFingerprint: str
+    isActive: bool
+    createdAt: datetime | None = None

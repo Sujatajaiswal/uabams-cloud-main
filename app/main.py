@@ -535,6 +535,14 @@ async def startup() -> None:
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                     );
                     ALTER TABLE trains ADD COLUMN IF NOT EXISTS route_id INTEGER REFERENCES routes(id) ON DELETE SET NULL;
+                    -- ── Authorized Gateways Registry ──────────────────────────
+                    CREATE TABLE IF NOT EXISTS authorized_gateways (
+                        gateway_id                TEXT PRIMARY KEY,
+                        expected_cert_fingerprint TEXT NOT NULL,
+                        is_active                 BOOLEAN NOT NULL DEFAULT TRUE,
+                        created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_authorized_gateways_active ON authorized_gateways(is_active);
 
                     CREATE TABLE IF NOT EXISTS gateways (
                         gateway_id       VARCHAR(100) PRIMARY KEY,
@@ -860,7 +868,8 @@ async def startup() -> None:
                         authenticated          BOOLEAN DEFAULT FALSE,
                         session_key_hex        TEXT,
                         verified_at            TIMESTAMP WITH TIME ZONE,
-                        created_at             TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                        created_at             TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        expires_at             TIMESTAMP WITH TIME ZONE
                     );
 
                     -- ── File storage (filesystem-backed, no BYTEA blobs) ──────
@@ -1051,6 +1060,7 @@ async def startup() -> None:
                     ALTER TABLE handshake_sessions ADD COLUMN IF NOT EXISTS verified               BOOLEAN DEFAULT FALSE;
                     ALTER TABLE handshake_sessions ADD COLUMN IF NOT EXISTS session_key_hex        TEXT;
                     ALTER TABLE handshake_sessions ADD COLUMN IF NOT EXISTS verified_at            TIMESTAMP WITH TIME ZONE;
+                    ALTER TABLE handshake_sessions ADD COLUMN IF NOT EXISTS expires_at            TIMESTAMP WITH TIME ZONE;
 
                     -- Remove duplicate columns (safe: neither was ever populated)
                     ALTER TABLE time_domain_files  DROP COLUMN IF EXISTS total_size;

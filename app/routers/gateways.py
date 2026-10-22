@@ -6,7 +6,10 @@ import uuid
 from hashlib import sha256
 
 from app.database import db
-from app.models import GatewayConnectionRequest, GatewayConnectionResponse, CalibrationUpdateRequest
+from app.models import (
+    GatewayConnectionRequest, GatewayConnectionResponse, CalibrationUpdateRequest,
+    AuthorizedGatewayCreate, AuthorizedGatewayUpdate, AuthorizedGatewayResponse
+)
 from app.utils import (
     utc_now, serialize, canonical_json_bytes, absolute_cloud_url,
     require_gateway_access, is_operator_authenticated, 
@@ -564,3 +567,86 @@ async def gateway_details(train_no: str, gateway_id: str):
         "archives": serialize(archives),
         "faults": serialize(faults),
     }
+
+
+# ── Authorized Gateways Registry Endpoints ──────────────────────────────
+
+@router.get("/api/v1/authorized-gateways", response_model=list[AuthorizedGatewayResponse])
+async def list_authorized_gateways(request: Request):
+    if not is_operator_authenticated(request):
+        raise HTTPException(status_code=403, detail="Operator authentication required")
+    if db.pg_pool:
+        rows = await db.pg_pool.fetch(
+            """
+            SELECT gateway_id AS "gatewayId", expected_cert_fingerprint AS "expectedCertFingerprint",
+                   is_active AS "isActive", created_at AS "createdAt"
+            FROM authorized_gateways
+            ORDER BY created_at DESC
+            """
+        )
+        return [dict(r) for r in rows]
+    return []
+
+
+@router.post("/api/v1/authorized-gateways", response_model=AuthorizedGatewayResponse)
+async def register_authorized_gateway(data: AuthorizedGatewayCreate, request: Request):
+    if not is_operator_authenticated(request):
+        raise HTTPException(status_code=403, detail="Operator authentication required")
+    if db.pg_pool:
+        existing = await db.pg_pool.fetchrow(
+            "SELECT gateway_id FROM authorized_gateways WHERE gateway_id = $1",
+            data.gatewayId
+        )
+        if existing:
+            raise HTTPException(status_code=400, detail=f"Gateway {data.gatewayId} is already registered")
+
+        row = await db.pg_pool.fetchrow(
+            """
+            INSERT INTO authorized_gateways (gateway_id, expected_cert_fingerprint, is_active, created_at)
+            VALUES ($1, $2, $3, $4)
+            RETURNING gateway_id AS "gatewayId", expected_cert_fingerprint AS "expectedCertFingerprint",
+                      is_active AS "isActive", created_at AS "createdAt"
+            """,
+            data.gatewayId, data.expectedCertFingerprint.strip().lower(), data.isActive, utc_now()
+        )
+        return dict(row)
+    raise HTTPException(status_code=500, detail="Database unavailable")
+
+
+@router.put("/api/v1/authorized-gateways/{gateway_id}", response_model=AuthorizedGatewayResponse)
+async def update_authorized_gateway(gateway_id: str, data: AuthorizedGatewayUpdate, request: Request):
+    if not is_operator_authenticated(request):
+        raise HTTPException(status_code=403, detail="Operator authentication required")
+    if db.pg_pool:
+        existing = await db.pg_pool.fetchrow(
+            "SELECT gateway_id, expected_cert_fingerprint, is_active, created_at FROM authorized_gateways WHERE gateway_id = $1",
+            gateway_id
+        )
+        if not existing:
+            raise HTTPException(status_code=404, detail="Authorized gateway not found")
+
+        new_fp = data.expectedCertFingerprint.strip().lower() if data.expectedCertFingerprint is not None else existing["expected_cert_fingerprint"]
+        new_active = data.isActive if data.isActive is not None else existing["is_active"]
+
+        row = await db.pg_pool.fetchrow(
+            """
+            UPDATE authorized_gateways
+            SET expected_cert_fingerprint = $1, is_active = $2
+            WHERE gateway_id = $3
+            RETURNING gateway_id AS "gatewayId", expected_cert_fingerprint AS "expectedCertFingerprint",
+                      is_active AS "isActive", created_at AS "createdAt"
+            """,
+            new_fp, new_active, gateway_id
+        )
+        return dict(row)
+    raise HTTPException(status_code=500, detail="Database unavailable")
+
+
+@router.delete("/api/v1/authorized-gateways/{gateway_id}")
+async def delete_authorized_gateway(gateway_id: str, request: Request):
+    if not is_operator_authenticated(request):
+        raise HTTPException(status_code=403, detail="Operator authentication required")
+    if db.pg_pool:
+        res = await db.pg_pool.execute("DELETE FROM authorized_gateways WHERE gateway_id = $1", gateway_id)
+        return {"status": "success", "message": f"Authorized gateway {gateway_id} removed"}
+    raise HTTPException(status_code=500, detail="Database unavailable")

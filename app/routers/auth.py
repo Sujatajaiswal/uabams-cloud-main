@@ -3,8 +3,11 @@ import hmac
 import os
 import uuid
 from secrets import token_hex
-from datetime import timedelta
+from datetime import datetime, timezone, timedelta
 from passlib.hash import bcrypt
+import logging
+
+logger = logging.getLogger("uvicorn.error")
 
 import re
 
@@ -54,37 +57,122 @@ async def handshake(data: HandshakeRequest, request: Request):
     try:
         now = utc_now()
         cert_pem = request.headers.get("X-Client-Cert") or data.clientCertPem
-        cert_fingerprint = None
-        cert_gateway_id = None
 
-        if cert_pem:
-            try:
-                cert_bytes = cert_pem.replace("\\n", "\n").encode("utf-8")
-                cert_fingerprint = hashlib.sha256(cert_bytes).hexdigest()
-                cert = x509.load_pem_x509_certificate(cert_bytes, default_backend())
-                cn_attributes = cert.subject.get_attributes_for_oid(x509.NameOID.COMMON_NAME)
-                if cn_attributes:
-                    cert_gateway_id = cn_attributes[0].value
-            except Exception as exc:
-                raise HTTPException(status_code=403, detail=f"Invalid or untrusted device certificate: {exc}")
+        # 1. Mandatory client certificate check
+        if not cert_pem:
+            raise HTTPException(
+                status_code=401,
+                detail="Client certificate is required"
+            )
 
-        gateway_id = cert_gateway_id or data.gatewayId
+        # 2. Safe certificate parsing (do not leak internal exceptions)
+        try:
+            cert_bytes = cert_pem.replace("\\n", "\n").strip().encode("utf-8")
+            cert = x509.load_pem_x509_certificate(cert_bytes, default_backend())
+        except Exception as exc:
+            logger.warning("Certificate parsing failed: %s", exc)
+            raise HTTPException(
+                status_code=403,
+                detail="Invalid or untrusted device certificate"
+            )
 
-        # Validate sshPublicKey if provided
+        # 3. Cryptographic validity & expiry check
+        not_before = getattr(cert, "not_valid_before_utc", None)
+        if not_before is None:
+            not_before = cert.not_valid_before.replace(tzinfo=timezone.utc)
+        not_after = getattr(cert, "not_valid_after_utc", None)
+        if not_after is None:
+            not_after = cert.not_valid_after.replace(tzinfo=timezone.utc)
+
+        if now < not_before or now > not_after:
+            logger.warning(
+                "Certificate validity check failed: not_before=%s, not_after=%s, now=%s",
+                not_before, not_after, now
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Certificate has expired or is not yet valid"
+            )
+
+        # 4. Extract Common Name (CN) as the gateway identity
+        cn_attributes = cert.subject.get_attributes_for_oid(x509.NameOID.COMMON_NAME)
+        if not cn_attributes or not cn_attributes[0].value:
+            logger.warning("Client certificate is missing Common Name (CN)")
+            raise HTTPException(
+                status_code=403,
+                detail="Client certificate missing Common Name (CN)"
+            )
+        cert_gateway_id = str(cn_attributes[0].value).strip()
+
+        # 5. Verify claimed gatewayId matches certificate CN (reject impersonation)
+        if data.gatewayId and data.gatewayId.strip() != cert_gateway_id:
+            logger.warning(
+                "Gateway ID mismatch: claimed=%s vs cert_cn=%s",
+                data.gatewayId, cert_gateway_id
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Gateway ID does not match certificate Common Name"
+            )
+
+        # 6. Compute certificate fingerprints (DER and PEM)
+        der_bytes = cert.public_bytes(serialization.Encoding.DER)
+        der_fingerprint = hashlib.sha256(der_bytes).hexdigest()
+        pem_fingerprint = hashlib.sha256(cert_bytes).hexdigest()
+        cert_fingerprint = der_fingerprint
+
+        # 7. Check Authorized Gateways Registry BEFORE ANY DATABASE WRITES
+        authorized = await db.pg_pool.fetchrow(
+            """
+            SELECT gateway_id, expected_cert_fingerprint, is_active
+            FROM authorized_gateways
+            WHERE gateway_id = $1
+            """,
+            cert_gateway_id
+        )
+
+        if not authorized:
+            logger.warning("Unauthorized handshake attempt for gateway: %s", cert_gateway_id)
+            raise HTTPException(
+                status_code=403,
+                detail="Gateway is not authorized"
+            )
+
+        if not authorized.get("is_active", True):
+            logger.warning("Handshake attempt by disabled gateway: %s", cert_gateway_id)
+            raise HTTPException(
+                status_code=403,
+                detail="Gateway is disabled"
+            )
+
+        expected_fp = authorized["expected_cert_fingerprint"].strip().lower()
+        if not (compare_digest(expected_fp, der_fingerprint.lower()) or compare_digest(expected_fp, pem_fingerprint.lower())):
+            logger.warning(
+                "Certificate fingerprint mismatch for %s: expected %s, got der=%s, pem=%s",
+                cert_gateway_id, expected_fp, der_fingerprint, pem_fingerprint
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Gateway certificate does not match registration"
+            )
+
+        gateway_id = authorized["gateway_id"]
+
+        # 8. Validate SSH public key if provided
         if data.sshPublicKey:
             cleaned_key = data.sshPublicKey.strip()
             valid_prefixes = ("ssh-rsa", "ssh-ed25519", "ecdsa-sha2-nistp256", "ssh-dss")
             if not any(cleaned_key.startswith(p) for p in valid_prefixes):
                 raise HTTPException(status_code=400, detail="Invalid SSH public key format")
-                
+
             other_auth = await db.pg_pool.fetchrow(
-                "SELECT gateway_id FROM gateway_auth WHERE ssh_public_key = $1", 
+                "SELECT gateway_id FROM gateway_auth WHERE ssh_public_key = $1",
                 cleaned_key
             )
             if other_auth and other_auth["gateway_id"] != gateway_id:
                 raise HTTPException(status_code=400, detail="SSH public key is already associated with another gateway")
 
-        # 1. Update gateways table without train_id
+        # 9. Update gateways table (only reached after authorization succeeded)
         await db.pg_pool.execute(
             """
             INSERT INTO gateways (gateway_id, gateway_serial, firmware_version, status, last_seen, updated_at, created_at)
@@ -99,7 +187,7 @@ async def handshake(data: HandshakeRequest, request: Request):
             gateway_id, data.gatewaySerial, data.firmwareVersion, "active", now, now, now
         )
 
-        # 2. Look up existing API key for this gateway_id
+        # 10. Look up existing API key or provision a new one ONLY for authorized gateway
         auth_doc = await db.pg_pool.fetchrow(
             'SELECT secret_key AS "apiKey" FROM gateway_auth WHERE gateway_id = $1',
             gateway_id
@@ -114,7 +202,7 @@ async def handshake(data: HandshakeRequest, request: Request):
         upload_base_path = f"/incoming/{gateway_id}/"
         upload_enabled = True
 
-        # 3. Upsert gateway_auth keyed on gateway_id alone
+        # 11. Upsert gateway_auth
         await db.pg_pool.execute(
             """
             INSERT INTO gateway_auth (
@@ -148,14 +236,14 @@ async def handshake(data: HandshakeRequest, request: Request):
                     if os.path.exists(auth_keys_path):
                         with open(auth_keys_path, "r") as f:
                             existing_keys = [line.strip() for line in f if line.strip()]
-                    
+
                     if ssh_pub_key not in existing_keys:
                         with open(auth_keys_path, "a") as f:
                             f.write(f"{ssh_pub_key}\n")
                 except Exception as e:
-                    print(f"Warning: Failed to update authorized_keys: {e}")
+                    logger.warning("Failed to update authorized_keys: %s", e)
 
-        # 4. Insert rows into gateway_train_assignments if provided
+        # 12. Insert rows into gateway_train_assignments if provided
         if data.trainIdDirA:
             await db.pg_pool.execute(
                 """
@@ -181,7 +269,7 @@ async def handshake(data: HandshakeRequest, request: Request):
                 """,
                 gateway_id, data.trainIdDirB, data.logicalGatewayIdDirB
             )
-        
+
         await db.pg_pool.execute(
             """
             INSERT INTO gateway_status (gateway_id, last_handshake)
@@ -211,7 +299,8 @@ async def handshake(data: HandshakeRequest, request: Request):
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Handshake error: {exc}")
+        logger.error("Internal handshake error: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error during handshake")
 
 
 @router.post("/api/v1/handshake/hello", response_model=HandshakeHelloResponse)
@@ -219,17 +308,29 @@ async def handshake_hello(data: HandshakeHelloRequest):
     try:
         bytes.fromhex(data.clientPublicKey)
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid clientPublicKey hex format. Please provide a valid 130-character hex string (SECP256R1 uncompressed point starting with 04).")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid clientPublicKey hex format. Please provide a valid 130-character hex string (SECP256R1 uncompressed point starting with 04)."
+        )
 
-    gateway = await db.pg_pool.fetchrow("SELECT gateway_id FROM gateways WHERE gateway_id = $1", data.gatewayId)
+    # 1. Verify gateway is registered in gateways
+    gateway = await db.pg_pool.fetchrow("SELECT gateway_id, status FROM gateways WHERE gateway_id = $1", data.gatewayId)
     if not gateway:
         raise HTTPException(status_code=404, detail="Gateway not registered")
 
-    # 1. Generate server ephemeral key pair
+    # 2. Verify gateway is not disabled in authorized_gateways registry
+    auth_gw = await db.pg_pool.fetchrow(
+        "SELECT gateway_id, is_active FROM authorized_gateways WHERE gateway_id = $1",
+        data.gatewayId
+    )
+    if auth_gw and not auth_gw.get("is_active", True):
+        raise HTTPException(status_code=403, detail="Gateway is disabled")
+
+    # 3. Generate server ephemeral key pair
     server_private_key = ec.generate_private_key(ec.SECP256R1())
     server_public_key = server_private_key.public_key()
 
-    # 2. Serialize keys to hex
+    # 4. Serialize keys to hex
     server_pub_bytes = server_public_key.public_bytes(
         encoding=serialization.Encoding.X962,
         format=serialization.PublicFormat.UncompressedPoint
@@ -243,17 +344,22 @@ async def handshake_hello(data: HandshakeHelloRequest):
     )
     server_priv_hex = server_priv_bytes.hex()
 
-    # 3. Create challenge nonce & session ID
+    # 5. Create challenge nonce, session ID, and session expiration (15 minutes)
+    now = utc_now()
+    expires_at = now + timedelta(minutes=15)
     nonce = token_hex(16)
     session_id = token_hex(16)
 
-    # 4. Save session state in PostgreSQL
+    # 6. Save session state in PostgreSQL with gateway binding and expiry
     await db.pg_pool.execute(
         """
-        INSERT INTO handshake_sessions (session_id, gateway_id, server_private_key_hex, client_public_key_hex, nonce, verified, authenticated, created_at)
-        VALUES ($1, $2, $3, $4, $5, FALSE, FALSE, $6)
+        INSERT INTO handshake_sessions (
+            session_id, gateway_id, server_private_key_hex, client_public_key_hex,
+            nonce, verified, authenticated, created_at, expires_at
+        )
+        VALUES ($1, $2, $3, $4, $5, FALSE, FALSE, $6, $7)
         """,
-        session_id, data.gatewayId, server_priv_hex, data.clientPublicKey, nonce, utc_now()
+        session_id, data.gatewayId, server_priv_hex, data.clientPublicKey, nonce, now, expires_at
     )
 
     return HandshakeHelloResponse(
@@ -266,17 +372,31 @@ async def handshake_hello(data: HandshakeHelloRequest):
 @router.post("/api/v1/handshake/verify", response_model=HandshakeVerifyResponse)
 async def handshake_verify(data: HandshakeVerifyRequest):
     session = await db.pg_pool.fetchrow(
-        "SELECT session_id AS \"sessionId\", server_private_key_hex AS \"serverPrivateKeyHex\", client_public_key_hex AS \"clientPublicKeyHex\", nonce, authenticated FROM handshake_sessions WHERE session_id = $1",
+        """
+        SELECT session_id AS "sessionId", gateway_id, server_private_key_hex AS "serverPrivateKeyHex",
+               client_public_key_hex AS "clientPublicKeyHex", nonce, authenticated, verified, expires_at
+        FROM handshake_sessions 
+        WHERE session_id = $1
+        """,
         data.sessionId
     )
     if not session:
         raise HTTPException(status_code=404, detail="Handshake session not found or expired")
 
+    # 1. Enforce session expiration
+    if session.get("expires_at") and session["expires_at"] < utc_now():
+        raise HTTPException(status_code=401, detail="Handshake session has expired")
+
+    # 2. Session must be authenticated first
     if not session.get("authenticated"):
         raise HTTPException(status_code=403, detail="Session not authenticated. Run /api/v1/authenticate first.")
 
+    # 3. Replay protection: prevent verifying the same session multiple times
+    if session.get("verified"):
+        raise HTTPException(status_code=400, detail="Handshake session has already been verified")
+
     try:
-        # 1. Load keys
+        # 4. Load keys
         server_private_key = serialization.load_der_private_key(
             bytes.fromhex(session["serverPrivateKeyHex"]),
             password=None
@@ -286,10 +406,10 @@ async def handshake_verify(data: HandshakeVerifyRequest):
             bytes.fromhex(session["clientPublicKeyHex"])
         )
 
-        # 2. Compute Diffie-Hellman Shared Secret
+        # 5. Compute Diffie-Hellman Shared Secret
         shared_key = server_private_key.exchange(ec.ECDH(), client_public_key)
 
-        # 3. Derive symmetric key via HKDF
+        # 6. Derive symmetric key via HKDF
         session_key = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
@@ -297,18 +417,18 @@ async def handshake_verify(data: HandshakeVerifyRequest):
             info=b"uabams-handshake-session-key",
         ).derive(shared_key)
 
-        # 4. Compute expected HMAC
+        # 7. Compute expected HMAC
         expected_hmac = hmac.new(
             session_key,
             session["nonce"].encode("utf-8"),
             digestmod=hashlib.sha256
         ).hexdigest()
 
-        # 5. Compare signatures using timing-safe compare_digest
+        # 8. Compare signatures using timing-safe compare_digest
         if not compare_digest(data.clientHmac.lower(), expected_hmac.lower()):
             raise HTTPException(status_code=401, detail="HMAC verification failed")
 
-        # 6. Save derived session key & verify session
+        # 9. Save derived session key & verify session
         await db.pg_pool.execute(
             """
             UPDATE handshake_sessions 
@@ -324,10 +444,13 @@ async def handshake_verify(data: HandshakeVerifyRequest):
             sessionToken=data.sessionId
         )
 
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid public key: {exc}")
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Handshake error: {exc}")
+        logger.error("Verify error: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error during handshake verification")
 
 
 @router.post("/api/v1/authenticate")
@@ -337,27 +460,58 @@ async def authenticate(data: AuthRequest):
 
     # 1. Verify session exists
     session = await db.pg_pool.fetchrow(
-        "SELECT session_id FROM handshake_sessions WHERE session_id = $1",
+        """
+        SELECT session_id, gateway_id, expires_at, authenticated 
+        FROM handshake_sessions 
+        WHERE session_id = $1
+        """,
         data.sessionId
     )
     if not session:
         raise HTTPException(status_code=404, detail="Handshake session not found or expired")
 
-        # 2. Look up gateway_auth by gatewayId
+    # 2. Enforce session expiration
+    if session.get("expires_at") and session["expires_at"] < utc_now():
+        raise HTTPException(status_code=401, detail="Handshake session has expired")
+
+    # 3. Bind session to gateway ID and prevent impersonation
+    session_gateway = session.get("gateway_id")
+    if session_gateway and session_gateway != gateway_id:
+        logger.warning(
+            "Gateway impersonation attempt: session_gateway=%s vs requested_gateway=%s",
+            session_gateway, gateway_id
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Gateway ID does not match handshake session"
+        )
+
+    # 4. Look up gateway_auth by gatewayId
     auth_doc = await db.pg_pool.fetchrow(
-        "SELECT secret_key AS \"apiKey\", cert_fingerprint AS \"certFingerprint\" FROM gateway_auth WHERE gateway_id = $1",
+        'SELECT secret_key AS "apiKey", cert_fingerprint AS "certFingerprint" FROM gateway_auth WHERE gateway_id = $1',
         gateway_id
     )
     if not auth_doc:
-        return {"status": "failed", "message": f"Gateway {gateway_id} not registered"}
+        raise HTTPException(status_code=403, detail=f"Gateway {gateway_id} not registered")
 
+    # 5. Check if disabled in authorized_gateways registry
+    auth_gw = await db.pg_pool.fetchrow(
+        "SELECT is_active FROM authorized_gateways WHERE gateway_id = $1",
+        gateway_id
+    )
+    if auth_gw and not auth_gw.get("is_active", True):
+        logger.warning("Authentication rejected: Gateway %s is disabled", gateway_id)
+        raise HTTPException(status_code=403, detail="Gateway is disabled")
+
+    # 6. Timing-safe constant-time API key validation
     stored_key = auth_doc.get("apiKey")
-    if stored_key != data.apiKey:
-        return {"status": "failed", "message": "Invalid API Key"}
+    if not stored_key or not compare_digest(stored_key, data.apiKey):
+        logger.warning("Authentication failed: Invalid API key for gateway %s", gateway_id)
+        raise HTTPException(status_code=401, detail="Invalid API Key")
 
-    # 3. Generate token and update session to authenticated
+    # 7. Generate token and update session to authenticated
     token = create_gateway_token(gateway_id)
-    
+
     await db.pg_pool.execute(
         """
         UPDATE handshake_sessions 
