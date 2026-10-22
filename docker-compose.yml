@@ -8,7 +8,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-uabams_db}
       POSTGRES_USER: ${POSTGRES_USER:-uabams_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-uabams_pass}
     ports:
       - "5433:5432"          # expose so pgAdmin / DBeaver can connect locally
     volumes:
@@ -31,16 +31,16 @@ services:
         condition: service_healthy   # wait until Postgres is ready
     environment:
       DATABASE_TYPE: postgres
-      DATABASE_URL: postgresql://${POSTGRES_USER:-uabams_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-uabams_db}
-      JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-uabams_user}:${POSTGRES_PASSWORD:-uabams_pass}@postgres:5432/${POSTGRES_DB:-uabams_db}
+      JWT_SECRET: ${JWT_SECRET:-local-docker-change-me}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
-      ADMIN_RESET_KEY: ${ADMIN_RESET_KEY}
-      GATEWAY_API_KEY_GW01: ${GATEWAY_API_KEY_GW01}
-      GATEWAY_API_KEY_GW02: ${GATEWAY_API_KEY_GW02}
+      ADMIN_RESET_KEY: ${ADMIN_RESET_KEY:-local-admin-key}
+      GATEWAY_API_KEY_GW01: ${GATEWAY_API_KEY_GW01:-local-gw1-key}
+      GATEWAY_API_KEY_GW02: ${GATEWAY_API_KEY_GW02:-local-gw2-key}
       OPERATOR_USERNAME: ${OPERATOR_USERNAME:-operator}
-      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD}
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:-operator123}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       CLOUD_PUBLIC_BASE_URL: "${CLOUD_PUBLIC_BASE_URL:-http://20.8.1.15:8000}"
       SSH_HOST: "${SSH_HOST:-20.8.1.15}"
       SSH_PORT: "${SSH_PORT:-2222}"
